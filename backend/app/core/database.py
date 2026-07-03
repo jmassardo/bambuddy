@@ -1831,6 +1831,15 @@ async def run_migrations(conn):
     if not is_sqlite():
         await _safe_execute(conn, "ALTER TABLE spoolbuddy_devices ALTER COLUMN ssh_host_key TYPE TEXT")
 
+    # Migration: Add fleet management columns to spoolbuddy_devices (Issue #5)
+    await _safe_execute(conn, "ALTER TABLE spoolbuddy_devices ADD COLUMN device_type VARCHAR(30) DEFAULT 'spoolbuddy'")
+    await _safe_execute(conn, "ALTER TABLE spoolbuddy_devices ADD COLUMN printer_id INTEGER")
+    await _safe_execute(conn, "ALTER TABLE spoolbuddy_devices ADD COLUMN device_config TEXT")
+    await _safe_execute(conn, "ALTER TABLE spoolbuddy_devices ADD COLUMN friendly_name VARCHAR(64)")
+    await _safe_execute(conn, "ALTER TABLE spoolbuddy_devices ADD COLUMN location VARCHAR(100)")
+    await _safe_execute(conn, "ALTER TABLE spoolbuddy_devices ADD COLUMN target_firmware VARCHAR(20)")
+    await _safe_execute(conn, "ALTER TABLE spoolbuddy_devices ADD COLUMN ota_status VARCHAR(20) DEFAULT 'current'")
+
     # Migration: Convert ams_labels table from (printer_id, ams_id) key to ams_serial_number key
     # Labels are now keyed by AMS serial number so they persist when the AMS is moved to another printer.
     # PostgreSQL gets the correct schema from create_all(), so skip this

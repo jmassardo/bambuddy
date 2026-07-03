@@ -6,12 +6,16 @@ from pydantic import BaseModel, Field, field_validator
 
 # --- Device schemas ---
 
+DEVICE_TYPES = Literal["spoolbuddy", "printer-panel", "clear-plate"]
+
 
 class DeviceRegisterRequest(BaseModel):
     device_id: str = Field(..., min_length=1, max_length=50)
     hostname: str = Field(..., min_length=1, max_length=100)
     ip_address: str = Field(..., min_length=1, max_length=45)
     firmware_version: str | None = Field(None, max_length=20)
+    device_type: DEVICE_TYPES = "spoolbuddy"
+    printer_id: int | None = None
     has_nfc: bool = True
     has_scale: bool = True
     tare_offset: int = 0
@@ -28,6 +32,10 @@ class DeviceResponse(BaseModel):
     hostname: str
     ip_address: str
     firmware_version: str | None = None
+    device_type: str = "spoolbuddy"
+    printer_id: int | None = None
+    friendly_name: str | None = None
+    location: str | None = None
     has_nfc: bool
     has_scale: bool
     tare_offset: int
@@ -46,6 +54,9 @@ class DeviceResponse(BaseModel):
     uptime_s: int
     update_status: str | None = None
     update_message: str | None = None
+    target_firmware: str | None = None
+    ota_status: str = "current"
+    device_config: dict | None = None
     system_stats: dict | None = None
     online: bool = False
     ssh_public_key: str | None = None
@@ -65,6 +76,8 @@ class HeartbeatRequest(BaseModel):
     nfc_reader_type: str | None = Field(None, max_length=20)
     nfc_connection: str | None = Field(None, max_length=20)
     backend_url: str | None = Field(None, max_length=255)
+    device_type: DEVICE_TYPES | None = None
+    state: str | None = Field(None, max_length=32)
     system_stats: dict | None = None
 
     @field_validator("system_stats")
@@ -84,6 +97,10 @@ class HeartbeatResponse(BaseModel):
     display_brightness: int = 100
     display_blank_timeout: int = 0
     ssh_public_key: str | None = None
+    # Fleet management fields
+    config_update: dict | None = None
+    ota_url: str | None = None
+    ota_version: str | None = None
 
 
 # --- NFC schemas ---

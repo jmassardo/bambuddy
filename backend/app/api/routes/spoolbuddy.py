@@ -133,6 +133,10 @@ def _device_to_response(device: SpoolBuddyDevice) -> DeviceResponse:
         hostname=device.hostname,
         ip_address=device.ip_address,
         firmware_version=device.firmware_version,
+        device_type=device.device_type or "spoolbuddy",
+        printer_id=device.printer_id,
+        friendly_name=device.friendly_name,
+        location=device.location,
         has_nfc=device.has_nfc,
         has_scale=device.has_scale,
         tare_offset=device.tare_offset,
@@ -151,6 +155,9 @@ def _device_to_response(device: SpoolBuddyDevice) -> DeviceResponse:
         uptime_s=device.uptime_s,
         update_status=device.update_status,
         update_message=device.update_message,
+        target_firmware=device.target_firmware,
+        ota_status=device.ota_status or "current",
+        device_config=json.loads(device.device_config) if device.device_config else None,
         system_stats=json.loads(device.system_stats) if device.system_stats else None,
         online=_is_online(device),
         created_at=device.created_at,
@@ -180,7 +187,7 @@ async def register_device(
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_UPDATE),
 ):
-    """Register or re-register a SpoolBuddy device."""
+    """Register or re-register a BamBuddy device (SpoolBuddy, Printer Panel, etc.)."""
     result = await db.execute(select(SpoolBuddyDevice).where(SpoolBuddyDevice.device_id == req.device_id))
     device = result.scalar_one_or_none()
 
@@ -189,25 +196,30 @@ async def register_device(
         device.hostname = req.hostname
         device.ip_address = req.ip_address
         device.firmware_version = req.firmware_version
+        device.device_type = req.device_type
         device.has_nfc = req.has_nfc
         device.has_scale = req.has_scale
         device.nfc_reader_type = req.nfc_reader_type
         device.nfc_connection = req.nfc_connection
         if req.backend_url:
             device.backend_url = req.backend_url
+        if req.printer_id is not None:
+            device.printer_id = req.printer_id
         device.has_backlight = req.has_backlight
         device.last_seen = now
         # Clear stale update status on re-registration (daemon restarted after update)
         if device.update_status in ("pending", "updating", "complete", "error"):
             device.update_status = None
             device.update_message = None
-        logger.info("SpoolBuddy device re-registered: %s (%s)", req.device_id, req.hostname)
+        logger.info("Device re-registered: %s (%s, type=%s)", req.device_id, req.hostname, req.device_type)
     else:
         device = SpoolBuddyDevice(
             device_id=req.device_id,
             hostname=req.hostname,
             ip_address=req.ip_address,
             firmware_version=req.firmware_version,
+            device_type=req.device_type,
+            printer_id=req.printer_id,
             has_nfc=req.has_nfc,
             has_scale=req.has_scale,
             tare_offset=req.tare_offset,
@@ -219,7 +231,7 @@ async def register_device(
             last_seen=now,
         )
         db.add(device)
-        logger.info("SpoolBuddy device registered: %s (%s)", req.device_id, req.hostname)
+        logger.info("Device registered: %s (%s, type=%s)", req.device_id, req.hostname, req.device_type)
 
     await db.commit()
     await db.refresh(device)
@@ -230,6 +242,7 @@ async def register_device(
             "type": "spoolbuddy_online",
             "device_id": device.device_id,
             "hostname": device.hostname,
+            "device_type": device.device_type,
         }
     )
 
@@ -248,11 +261,15 @@ async def register_device(
 
 @router.get("/devices", response_model=list[DeviceResponse])
 async def list_devices(
+    device_type: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_READ),
 ):
-    """List all registered SpoolBuddy devices."""
-    result = await db.execute(select(SpoolBuddyDevice).order_by(SpoolBuddyDevice.hostname))
+    """List all registered devices, optionally filtered by type."""
+    query = select(SpoolBuddyDevice).order_by(SpoolBuddyDevice.hostname)
+    if device_type:
+        query = query.where(SpoolBuddyDevice.device_type == device_type)
+    result = await db.execute(query)
     devices = list(result.scalars().all())
     return [_device_to_response(d) for d in devices]
 
@@ -307,6 +324,8 @@ async def device_heartbeat(
         device.nfc_connection = req.nfc_connection
     if req.backend_url:
         device.backend_url = req.backend_url
+    if req.device_type:
+        device.device_type = req.device_type
     if req.system_stats is not None:
         device.system_stats = json.dumps(req.system_stats)
 
@@ -333,6 +352,23 @@ async def device_heartbeat(
     else:
         device.pending_command = None
 
+    # Check if OTA is needed (target firmware > current firmware)
+    ota_url = None
+    ota_version = None
+    if device.target_firmware and device.firmware_version != device.target_firmware:
+        ota_url = f"/firmware/{device.device_type}/{device.target_firmware}.bin"
+        ota_version = device.target_firmware
+        if device.ota_status != "downloading":
+            device.ota_status = "pending"
+
+    # Build config update if device_config has changed
+    config_update = None
+    if device.device_config:
+        try:
+            config_update = json.loads(device.device_config)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     await db.commit()
 
     # Emit online presence on offline->online transitions immediately, and
@@ -343,10 +379,11 @@ async def device_heartbeat(
                 "type": "spoolbuddy_online",
                 "device_id": device.device_id,
                 "hostname": device.hostname,
+                "device_type": device.device_type or "spoolbuddy",
             }
         )
     if was_offline:
-        logger.info("SpoolBuddy device back online: %s", device.device_id)
+        logger.info("Device back online: %s (type=%s)", device.device_id, device.device_type)
 
     # Include current SSH public key so the daemon can re-deploy it whenever
     # Bambuddy's keypair rotates (data dir wiped, container recreated, etc.) —
@@ -368,6 +405,9 @@ async def device_heartbeat(
         display_brightness=device.display_brightness,
         display_blank_timeout=device.display_blank_timeout,
         ssh_public_key=ssh_public_key,
+        config_update=config_update,
+        ota_url=ota_url,
+        ota_version=ota_version,
     )
 
 
@@ -1464,3 +1504,183 @@ async def spoolbuddy_watchdog():
                 logger.info("SpoolBuddy device offline: %s", device.device_id)
 
         await db.commit()
+
+
+# --- Printer Panel proxy endpoints ---
+# These let a printer-panel device access its assigned printer's data
+# through the device API, resolved by device_id → printer_id assignment.
+
+
+async def _get_device_printer_id(device_id: str, db: AsyncSession) -> int:
+    """Resolve a device's assigned printer_id or raise 400."""
+    result = await db.execute(select(SpoolBuddyDevice).where(SpoolBuddyDevice.device_id == device_id))
+    device = result.scalar_one_or_none()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not registered")
+    if not device.printer_id:
+        raise HTTPException(status_code=400, detail="No printer assigned to this device")
+    return device.printer_id
+
+
+@router.get("/devices/{device_id}/printer-status")
+async def device_printer_status(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
+):
+    """Get the assigned printer's real-time status (for printer-panel devices)."""
+    from backend.app.models.printer import Printer
+    from backend.app.services.printer_manager import printer_manager
+
+    printer_id = await _get_device_printer_id(device_id, db)
+
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(status_code=404, detail="Assigned printer not found")
+
+    state = printer_manager.get_status(printer_id)
+    if not state:
+        return {
+            "printer_id": printer_id,
+            "name": printer.name,
+            "connected": False,
+            "state": "offline",
+        }
+
+    # Compact response optimized for embedded devices (small payload)
+    hms_errors = [
+        {"code": e.full_code or e.code, "short": e.attr or e.code, "severity": e.severity}
+        for e in (state.hms_errors or [])
+    ]
+
+    return {
+        "printer_id": printer_id,
+        "name": printer.name,
+        "connected": True,
+        "state": state.state,
+        "progress": state.mc_percent,
+        "time_remaining_min": state.mc_remaining_time,
+        "job_name": state.gcode_file,
+        "hms_errors": hms_errors,
+        "awaiting_plate_clear": printer_manager.is_awaiting_plate_clear(printer_id),
+    }
+
+
+@router.post("/devices/{device_id}/plate-clear")
+async def device_plate_clear(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_CLEAR_PLATE),
+):
+    """Clear the build plate for the device's assigned printer."""
+    from backend.app.models.printer import Printer
+    from backend.app.services.printer_manager import printer_manager
+
+    printer_id = await _get_device_printer_id(device_id, db)
+
+    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(status_code=404, detail="Assigned printer not found")
+
+    if not printer_manager.is_connected(printer_id):
+        raise HTTPException(status_code=400, detail="Printer not connected")
+
+    state = printer_manager.get_status(printer_id)
+    awaiting = printer_manager.is_awaiting_plate_clear(printer_id)
+    if not awaiting and (not state or state.state not in ("FINISH", "FAILED")):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Printer is not awaiting plate-clear (state={state.state if state else 'unknown'})",
+        )
+
+    printer_manager.set_awaiting_plate_clear(printer_id, False)
+    return {"success": True, "printer_id": printer_id, "message": "Plate cleared"}
+
+
+@router.get("/devices/{device_id}/queue")
+async def device_queue(
+    device_id: str,
+    limit: int = 3,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
+):
+    """Get the next queued jobs for the device's assigned printer."""
+    from sqlalchemy.orm import selectinload
+
+    from backend.app.models.print_queue import PrintQueueItem
+
+    printer_id = await _get_device_printer_id(device_id, db)
+
+    result = await db.execute(
+        select(PrintQueueItem)
+        .options(selectinload(PrintQueueItem.library_file), selectinload(PrintQueueItem.archive))
+        .where(PrintQueueItem.printer_id == printer_id, PrintQueueItem.status == "queued")
+        .order_by(PrintQueueItem.position)
+        .limit(limit)
+    )
+    items = list(result.scalars().all())
+
+    jobs = []
+    for item in items:
+        name = "Unknown"
+        if item.library_file:
+            name = item.library_file.filename
+        elif item.archive and hasattr(item.archive, "filename"):
+            name = item.archive.filename
+        jobs.append({"id": item.id, "name": name, "position": item.position})
+
+    return {
+        "printer_id": printer_id,
+        "count": len(jobs),
+        "jobs": jobs,
+    }
+
+
+@router.post("/devices/{device_id}/hms-ack")
+async def device_hms_ack(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+):
+    """Acknowledge/clear HMS errors on the device's assigned printer."""
+    from backend.app.services.printer_manager import printer_manager
+
+    printer_id = await _get_device_printer_id(device_id, db)
+
+    if not printer_manager.is_connected(printer_id):
+        raise HTTPException(status_code=400, detail="Printer not connected")
+
+    client = printer_manager.get_client(printer_id)
+    if client:
+        client.clear_hms_errors()
+
+    return {"success": True, "printer_id": printer_id}
+
+
+@router.patch("/devices/{device_id}/assign")
+async def device_assign_printer(
+    device_id: str,
+    printer_id: int | None = None,
+    friendly_name: str | None = None,
+    location: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_UPDATE),
+):
+    """Assign a printer (or update name/location) for a device."""
+    result = await db.execute(select(SpoolBuddyDevice).where(SpoolBuddyDevice.device_id == device_id))
+    device = result.scalar_one_or_none()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not registered")
+
+    if printer_id is not None:
+        device.printer_id = printer_id
+    if friendly_name is not None:
+        device.friendly_name = friendly_name
+    if location is not None:
+        device.location = location
+
+    await db.commit()
+    await db.refresh(device)
+    return _device_to_response(device)

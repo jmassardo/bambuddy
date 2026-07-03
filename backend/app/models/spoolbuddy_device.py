@@ -7,7 +7,13 @@ from backend.app.core.database import Base
 
 
 class SpoolBuddyDevice(Base):
-    """SpoolBuddy device registration for RPi-based filament management stations."""
+    """BamBuddy device registration for all hardware device types.
+
+    Supports multiple device types:
+    - "spoolbuddy": RPi/ESP32-based filament management stations (NFC + scale)
+    - "printer-panel": Per-printer ESP32-S3 control panels (OLED + encoder)
+    - "clear-plate": Legacy standalone clear-plate button boxes
+    """
 
     __tablename__ = "spoolbuddy_devices"
 
@@ -38,5 +44,15 @@ class SpoolBuddyDevice(Base):
     uptime_s: Mapped[int] = mapped_column(Integer, default=0)
     system_stats: Mapped[str | None] = mapped_column(Text, nullable=True)
     ssh_host_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Fleet management columns (Issue #5)
+    device_type: Mapped[str] = mapped_column(String(30), default="spoolbuddy")
+    printer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    device_config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    friendly_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    target_firmware: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ota_status: Mapped[str] = mapped_column(String(20), default="current")
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
