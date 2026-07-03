@@ -9,18 +9,15 @@
 #include "display.h"
 #include "input.h"
 #include "api_client.h"
-
-// ---- Configuration (hardcoded for MVP, will move to NVS/provisioning) ----
-#define WIFI_SSID      "YOUR_SSID"
-#define WIFI_PASS      "YOUR_PASSWORD"
-#define DEVICE_ID      "panel-001"
-#define PRINTER_ID     3
-#define API_KEY        "YOUR_API_KEY"
-// --------------------------------------------------------------------------
+#include "provision.h"
+#include "ota.h"
 
 Display display;
 Input input;
 ApiClient network;
+Provisioning provisioning;
+OtaUpdater otaUpdater;
+DeviceConfig deviceCfg = {};
 
 // State
 uint32_t lastStatusPoll = 0;
@@ -42,16 +39,41 @@ void setup() {
     pinMode(PIN_LED, OUTPUT);
     digitalWrite(PIN_LED, HIGH);  // OFF (active low)
 
-    // Init subsystems
+    // Init display first (shows status during boot)
     display.begin();
     input.begin();
+    provisioning.begin();
+
+    // Confirm OTA if we just updated
+    if (otaUpdater.justUpdated()) {
+        otaUpdater.confirmUpdate();
+        Serial.println("Firmware update confirmed!");
+    }
+
+    // Load config from NVS
+    if (!provisioning.loadConfig(deviceCfg)) {
+        Serial.println("Device not provisioned — starting captive portal");
+        display.showScreen(Screen::PROVISIONING);
+        provisioning.startCaptivePortal();  // Blocks until config saved + reboot
+        return;  // Never reached (reboot happens)
+    }
+
+    // Check for factory reset: hold BACK + CLR during boot
+    if (digitalRead(PIN_BTN_BACK) == LOW && digitalRead(PIN_BTN_CLR) == LOW) {
+        Serial.println("Factory reset requested (BACK+CLR held)!");
+        display.showToast("Factory Reset!", 3000);
+        display.loop();
+        delay(2000);
+        provisioning.factoryReset();  // Clears NVS and reboots
+        return;
+    }
 
     // Connect to WiFi
-    Serial.printf("Connecting to WiFi: %s\n", WIFI_SSID);
-    network.setServer(DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT, API_KEY);
-    network.setDeviceId(DEVICE_ID);
-    network.setPrinterId(PRINTER_ID);
-    network.begin(WIFI_SSID, WIFI_PASS);
+    Serial.printf("Connecting to WiFi: %s\n", deviceCfg.wifiSsid);
+    network.setServer(deviceCfg.serverHost, deviceCfg.serverPort, deviceCfg.apiKey);
+    network.setDeviceId(deviceCfg.deviceId);
+    network.setPrinterId(deviceCfg.printerId);
+    network.begin(deviceCfg.wifiSsid, deviceCfg.wifiPass);
 
     if (network.isWifiConnected()) {
         Serial.printf("WiFi connected! IP: %s RSSI: %d\n",
@@ -83,6 +105,23 @@ void loop() {
     // Update display connectivity indicators
     display.setWifiStatus(network.isWifiConnected(), network.wifiRssi());
     display.setServerStatus(network.isServerConnected());
+
+    // Check for OTA update (delivered via heartbeat response)
+    if (network.otaPending()) {
+        Serial.printf("[OTA] Update available: %s\n", network.otaUrl());
+        display.showToast("Updating FW...", 30000);
+        display.loop();
+        otaUpdater.update(network.otaUrl(), deviceCfg.apiKey,
+            [](uint8_t percent) {
+                Serial.printf("[OTA] %d%%\n", percent);
+            },
+            [](bool success, const char* msg) {
+                Serial.printf("[OTA] %s: %s\n", success ? "OK" : "FAIL", msg);
+            });
+        // If we get here, OTA failed (success = reboot)
+        network.clearOta();
+        display.showToast("OTA failed!", 3000);
+    }
 
     // Poll printer status periodically
     uint32_t now = millis();
