@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BamBuddy Printer Panel Simulator</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+h1 { color: #00d4aa; margin-bottom: 4px; font-size: 1.4em; }
+.subtitle { color: #888; font-size: 0.85em; margin-bottom: 20px; }
+
+.device-frame {
+  background: #2d2d2d;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.pcb-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  background: #3a3a2a;
+  border: 2px solid #555;
+  border-radius: 6px;
+  padding: 20px 28px;
+  /* Perfboard dots */
+  background-image: radial-gradient(circle, #4a4a3a 1px, transparent 1px);
+  background-size: 8px 8px;
+}
+
+/* OLED Display - 128x64 scaled 3x */
+.oled-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.oled {
+  background: #000;
+  border: 2px solid #333;
+  border-radius: 4px;
+  padding: 4px;
+}
+.oled canvas {
+  width: 384px;
+  height: 192px;
+  image-rendering: pixelated;
+}
+.oled-label { font-size: 0.6em; color: #666; }
+
+/* Controls */
+.encoder-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.encoder {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #555, #222);
+  border: 3px solid #444;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s;
+  user-select: none;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+}
+.encoder:active { transform: scale(0.92); background: radial-gradient(circle at 30% 30%, #666, #333); }
+.encoder .notch {
+  width: 4px; height: 18px;
+  background: #888;
+  border-radius: 2px;
+  transform: rotate(var(--rot, 0deg));
+  transition: transform 0.1s;
+}
+.encoder-label { font-size: 0.6em; color: #666; }
+
+.button-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.btn {
+  width: 48px;
+  height: 36px;
+  background: #222;
+  border: 2px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6em;
+  color: #aaa;
+  user-select: none;
+  transition: all 0.1s;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+}
+.btn:active { background: #555; border-color: #00d4aa; color: #fff; transform: translateY(1px); }
+.btn-label { font-size: 0.6em; color: #666; margin-top: 4px; }
+
+/* Keyboard hints */
+.hints {
+  margin-top: 16px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.hint {
+  font-size: 0.75em;
+  color: #666;
+  background: #222;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.hint kbd {
+  background: #333;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #00d4aa;
+  font-family: monospace;
+}
+
+/* Status bar */
+.status-bar {
+  margin-top: 12px;
+  font-size: 0.75em;
+  color: #666;
+  text-align: center;
+}
+
+/* Sim controls */
+.sim-controls {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.sim-btn {
+  font-size: 0.75em;
+  padding: 6px 12px;
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #ccc;
+  cursor: pointer;
+}
+.sim-btn:hover { background: #444; border-color: #00d4aa; }
+</style>
+</head>
+<body>
+
+<h1>🖥️ Printer Panel Simulator</h1>
+<p class="subtitle">Per-printer control panel — ESP32-S3 Mini + 1" OLED + Encoder + 2 Buttons</p>
+
+<div class="device-frame">
+  <div class="pcb-row">
+    <div class="encoder-group">
+      <div class="encoder" id="encoderKnob">
+        <div class="notch"></div>
+      </div>
+      <span class="encoder-label">ENCODER</span>
+    </div>
+    <div class="oled-frame">
+      <div class="oled">
+        <canvas id="screen" width="128" height="64"></canvas>
+      </div>
+      <span class="oled-label">1" OLED</span>
+    </div>
+    <div class="button-group">
+      <div>
+        <div class="btn" id="btnA">◀ BCK</div>
+      </div>
+      <div>
+        <div class="btn" id="btnB">⚡ CLR</div>
+      </div>
+      <span class="btn-label">BUTTONS</span>
+    </div>
+  </div>
+</div>
+
+<div class="hints">
+  <span class="hint"><kbd>↑</kbd><kbd>↓</kbd> Scroll</span>
+  <span class="hint"><kbd>Enter</kbd> Select</span>
+  <span class="hint"><kbd>Esc</kbd> Back</span>
+  <span class="hint"><kbd>C</kbd> Quick Clear</span>
+  <span class="hint"><kbd>E</kbd> Trigger HMS Error</span>
+  <span class="hint"><kbd>R</kbd> Reset to Idle</span>
+</div>
+
+<div class="sim-controls">
+  <button class="sim-btn" onclick="simSetState('printing')">Sim: Printing</button>
+  <button class="sim-btn" onclick="simSetState('idle')">Sim: Idle</button>
+  <button class="sim-btn" onclick="simSetState('paused')">Sim: Paused</button>
+  <button class="sim-btn" onclick="triggerHMS()">Sim: HMS Error</button>
+  <button class="sim-btn" onclick="triggerPrintDone()">Sim: Print Done</button>
+</div>
+
+<div class="status-bar" id="statusBar">Screen: HOME | Printer: P1S-03 (Idle)</div>
+
+<script>
+// ─── OLED Rendering Engine ───────────────────────────────────────────────────
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+// 128x64 pixel buffer (1-bit: 0=off, 1=on)
+const OLED_W = 128, OLED_H = 64;
+const fb = new Uint8Array(OLED_W * OLED_H);
+
+// Tiny 5x7 font (subset of printable ASCII)
+const FONT_5x7 = {};
+const fontData = {
+  ' ': [0x00,0x00,0x00,0x00,0x00],
+  '!': [0x00,0x00,0x5F,0x00,0x00],
+  '"': [0x00,0x07,0x00,0x07,0x00],
+  '#': [0x14,0x7F,0x14,0x7F,0x14],
+  '%': [0x23,0x13,0x08,0x64,0x62],
+  '(': [0x00,0x1C,0x22,0x41,0x00],
+  ')': [0x00,0x41,0x22,0x1C,0x00],
+  '*': [0x14,0x08,0x3E,0x08,0x14],
+  '+': [0x08,0x08,0x3E,0x08,0x08],
+  ',': [0x00,0x50,0x30,0x00,0x00],
+  '-': [0x08,0x08,0x08,0x08,0x08],
+  '.': [0x00,0x60,0x60,0x00,0x00],
+  '/': [0x20,0x10,0x08,0x04,0x02],
+  '0': [0x3E,0x51,0x49,0x45,0x3E],
+  '1': [0x00,0x42,0x7F,0x40,0x00],
+  '2': [0x42,0x61,0x51,0x49,0x46],
+  '3': [0x21,0x41,0x45,0x4B,0x31],
+  '4': [0x18,0x14,0x12,0x7F,0x10],
+  '5': [0x27,0x45,0x45,0x45,0x39],
+  '6': [0x3C,0x4A,0x49,0x49,0x30],
+  '7': [0x01,0x71,0x09,0x05,0x03],
+  '8': [0x36,0x49,0x49,0x49,0x36],
+  '9': [0x06,0x49,0x49,0x29,0x1E],
+  ':': [0x00,0x36,0x36,0x00,0x00],
+  '<': [0x08,0x14,0x22,0x41,0x00],
+  '=': [0x14,0x14,0x14,0x14,0x14],
+  '>': [0x00,0x41,0x22,0x14,0x08],
+  '?': [0x02,0x01,0x51,0x09,0x06],
+  'A': [0x7E,0x11,0x11,0x11,0x7E],
+  'B': [0x7F,0x49,0x49,0x49,0x36],
+  'C': [0x3E,0x41,0x41,0x41,0x22],
+  'D': [0x7F,0x41,0x41,0x22,0x1C],
+  'E': [0x7F,0x49,0x49,0x49,0x41],
+  'F': [0x7F,0x09,0x09,0x09,0x01],
+  'G': [0x3E,0x41,0x49,0x49,0x7A],
+  'H': [0x7F,0x08,0x08,0x08,0x7F],
+  'I': [0x00,0x41,0x7F,0x41,0x00],
+  'J': [0x20,0x40,0x41,0x3F,0x01],
+  'K': [0x7F,0x08,0x14,0x22,0x41],
+  'L': [0x7F,0x40,0x40,0x40,0x40],
+  'M': [0x7F,0x02,0x0C,0x02,0x7F],
+  'N': [0x7F,0x04,0x08,0x10,0x7F],
+  'O': [0x3E,0x41,0x41,0x41,0x3E],
+  'P': [0x7F,0x09,0x09,0x09,0x06],
+  'Q': [0x3E,0x41,0x51,0x21,0x5E],
+  'R': [0x7F,0x09,0x19,0x29,0x46],
+  'S': [0x46,0x49,0x49,0x49,0x31],
+  'T': [0x01,0x01,0x7F,0x01,0x01],
+  'U': [0x3F,0x40,0x40,0x40,0x3F],
+  'V': [0x1F,0x20,0x40,0x20,0x1F],
+  'W': [0x3F,0x40,0x38,0x40,0x3F],
+  'X': [0x63,0x14,0x08,0x14,0x63],
+  'Y': [0x07,0x08,0x70,0x08,0x07],
+  'Z': [0x61,0x51,0x49,0x45,0x43],
+  '[': [0x00,0x7F,0x41,0x41,0x00],
+  ']': [0x00,0x41,0x41,0x7F,0x00],
+  '_': [0x40,0x40,0x40,0x40,0x40],
+  'a': [0x20,0x54,0x54,0x54,0x78],
+  'b': [0x7F,0x48,0x44,0x44,0x38],
+  'c': [0x38,0x44,0x44,0x44,0x20],
+  'd': [0x38,0x44,0x44,0x48,0x7F],
+  'e': [0x38,0x54,0x54,0x54,0x18],
+  'f': [0x08,0x7E,0x09,0x01,0x02],
+  'g': [0x0C,0x52,0x52,0x52,0x3E],
+  'h': [0x7F,0x08,0x04,0x04,0x78],
+  'i': [0x00,0x44,0x7D,0x40,0x00],
+  'j': [0x20,0x40,0x44,0x3D,0x00],
+  'k': [0x7F,0x10,0x28,0x44,0x00],
+  'l': [0x00,0x41,0x7F,0x40,0x00],
+  'm': [0x7C,0x04,0x18,0x04,0x78],
+  'n': [0x7C,0x08,0x04,0x04,0x78],
+  'o': [0x38,0x44,0x44,0x44,0x38],
+  'p': [0x7C,0x14,0x14,0x14,0x08],
+  'q': [0x08,0x14,0x14,0x18,0x7C],
+  'r': [0x7C,0x08,0x04,0x04,0x08],
+  's': [0x48,0x54,0x54,0x54,0x20],
+  't': [0x04,0x3F,0x44,0x40,0x20],
+  'u': [0x3C,0x40,0x40,0x20,0x7C],
+  'v': [0x1C,0x20,0x40,0x20,0x1C],
+  'w': [0x3C,0x40,0x30,0x40,0x3C],
+  'x': [0x44,0x28,0x10,0x28,0x44],
+  'y': [0x0C,0x50,0x50,0x50,0x3C],
+  'z': [0x44,0x64,0x54,0x4C,0x44],
+  '|': [0x00,0x00,0x7F,0x00,0x00],
+  '~': [0x04,0x02,0x04,0x08,0x04],
+};
+Object.entries(fontData).forEach(([ch, d]) => { FONT_5x7[ch] = d; });
+
+function clearFB() { fb.fill(0); }
+
+function setPixel(x, y, on = 1) {
+  if (x >= 0 && x < OLED_W && y >= 0 && y < OLED_H) fb[y * OLED_W + x] = on ? 1 : 0;
+}
+
+function drawChar(ch, x, y, scale = 1) {
+  const data = FONT_5x7[ch] || FONT_5x7['?'];
+  for (let col = 0; col < 5; col++) {
+    for (let row = 0; row < 7; row++) {
+      if (data[col] & (1 << row)) {
+        for (let sy = 0; sy < scale; sy++)
+          for (let sx = 0; sx < scale; sx++)
+            setPixel(x + col * scale + sx, y + row * scale + sy);
+      }
+    }
+  }
+}
+
+function drawText(str, x, y, scale = 1) {
+  for (let i = 0; i < str.length; i++) {
+    drawChar(str[i], x + i * (6 * scale), y, scale);
+  }
+}
+
+function drawTextRight(str, y, scale = 1) {
+  const w = str.length * 6 * scale - scale;
+  drawText(str, OLED_W - w - 1, y, scale);
+}
+
+function drawTextCenter(str, y, scale = 1) {
+  const w = str.length * 6 * scale - scale;
+  drawText(str, Math.floor((OLED_W - w) / 2), y, scale);
+}
+
+function drawLine(x0, y0, x1, y1) {
+  const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+  while (true) {
+    setPixel(x0, y0);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x0 += sx; }
+    if (e2 < dx) { err += dx; y0 += sy; }
+  }
+}
+
+function drawRect(x, y, w, h, fill = false) {
+  if (fill) {
+    for (let row = y; row < y + h; row++)
+      for (let col = x; col < x + w; col++) setPixel(col, row);
+  } else {
+    drawLine(x, y, x + w - 1, y);
+    drawLine(x, y + h - 1, x + w - 1, y + h - 1);
+    drawLine(x, y, x, y + h - 1);
+    drawLine(x + w - 1, y, x + w - 1, y + h - 1);
+  }
+}
+
+function drawProgressBar(x, y, w, h, pct) {
+  drawRect(x, y, w, h);
+  const fill = Math.round((w - 2) * Math.min(1, Math.max(0, pct)));
+  if (fill > 0) drawRect(x + 1, y + 1, fill, h - 2, true);
+}
+
+function drawIcon(name, x, y) {
+  const icons = {
+    wifi: () => {
+      // Simple WiFi arc icon
+      for (let r = 2; r <= 6; r += 2) {
+        for (let a = -45; a <= 45; a += 5) {
+          const rad = a * Math.PI / 180;
+          setPixel(x + Math.round(Math.sin(rad) * r), y + 6 - Math.round(Math.cos(rad) * r));
+        }
+      }
+      setPixel(x, y + 6);
+    },
+    warn: () => {
+      // Triangle with !
+      for (let i = 0; i <= 8; i++) { setPixel(x + 4 - i/2, y + i); setPixel(x + 4 + i/2, y + i); }
+      drawLine(x, y + 8, x + 8, y + 8);
+      setPixel(x + 4, y + 3); setPixel(x + 4, y + 4); setPixel(x + 4, y + 5);
+      setPixel(x + 4, y + 7);
+    },
+    check: () => {
+      drawLine(x, y + 4, x + 2, y + 6);
+      drawLine(x + 2, y + 6, x + 6, y + 1);
+    },
+    spool: () => {
+      // Circle with line
+      for (let a = 0; a < 360; a += 20) {
+        const rad = a * Math.PI / 180;
+        setPixel(x + 4 + Math.round(Math.cos(rad) * 4), y + 4 + Math.round(Math.sin(rad) * 4));
+      }
+      setPixel(x + 4, y + 4);
+    },
+    printer: () => {
+      drawRect(x + 1, y, 6, 3);
+      drawRect(x, y + 3, 8, 4);
+      drawRect(x + 1, y + 7, 6, 2);
+    },
+    arrow_r: () => {
+      drawLine(x, y + 3, x + 5, y + 3);
+      drawLine(x + 3, y + 1, x + 5, y + 3);
+      drawLine(x + 3, y + 5, x + 5, y + 3);
+    }
+  };
+  if (icons[name]) icons[name]();
+}
+
+function renderFB() {
+  const img = ctx.createImageData(128, 64);
+  for (let i = 0; i < OLED_W * OLED_H; i++) {
+    const v = fb[i] ? 255 : 0;
+    img.data[i * 4] = v;
+    img.data[i * 4 + 1] = v;
+    img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// ─── State Machine ──────────────────────────────────────────────────────────
+
+const SCREENS = {
+  HOME: 'HOME',
+  MENU: 'MENU',
+  PLATE_CLEAR: 'PLATE_CLEAR',
+  SPOOL_ASSIGN: 'SPOOL_ASSIGN',
+  SPOOL_SLOT: 'SPOOL_SLOT',
+  QUEUE_PEEK: 'QUEUE_PEEK',
+  HMS_ERROR: 'HMS_ERROR',
+  HMS_DETAIL: 'HMS_DETAIL',
+  PRINT_DONE: 'PRINT_DONE',
+  SETTINGS: 'SETTINGS',
+};
+
+// Simulated printer state
+let printer = {
+  name: 'P1S-03',
+  state: 'idle', // idle, printing, paused, error, done
+  progress: 0,
+  timeLeft: '1h 23m',
+  jobName: 'gridfinity_2x3_bin',
+  amsSlots: [
+    { slot: 1, material: 'PLA', color: 'Black', spool: 'Bambu PLA Basic' },
+    { slot: 2, material: 'PLA', color: 'White', spool: 'Bambu PLA Basic' },
+    { slot: 3, material: 'PETG', color: 'Red', spool: 'Polymaker Pro' },
+    { slot: 4, material: null, color: null, spool: null },
+  ],
+  queue: [
+    { name: 'cable_clip_x20', material: 'PLA', time: '45m' },
+    { name: 'enclosure_fan_duct', material: 'PETG', time: '2h 10m' },
+  ],
+  hmsErrors: [],
+};
+
+// Available spools for assignment
+const spoolCatalog = [
+  { id: 1, brand: 'Bambu', material: 'PLA', color: 'Black', weight: '820g' },
+  { id: 2, brand: 'Bambu', material: 'PLA', color: 'White', weight: '740g' },
+  { id: 3, brand: 'Polymaker', material: 'PETG', color: 'Red', weight: '650g' },
+  { id: 4, brand: 'Bambu', material: 'PLA', color: 'Green', weight: '990g' },
+  { id: 5, brand: 'eSUN', material: 'ABS', color: 'Gray', weight: '450g' },
+  { id: 6, brand: 'Bambu', material: 'PLA-CF', color: 'Black', weight: '380g' },
+];
+
+const hmsDatabase = [
+  { code: '0700_2000_0002_0001', short: 'AMS1 Slot2: Tangle', detail: 'Filament tangled or stuck in AMS feeder. Check spool and retry.' },
+  { code: '0300_1000_0001_0001', short: 'Nozzle clogged', detail: 'Nozzle temperature normal but no extrusion detected. Clean or replace nozzle.' },
+  { code: '0500_0100_0001_0002', short: 'First layer failed', detail: 'First layer inspection failed. Check bed adhesion and Z offset.' },
+  { code: '0C00_0100_0002_0001', short: 'Chamber temp high', detail: 'Chamber temperature exceeded safe limit. Check ventilation.' },
+];
+
+let currentScreen = SCREENS.HOME;
+let menuIndex = 0;
+let screenStack = [];
+let selectedSlot = 0;
+let selectedSpool = 0;
+let hmsIndex = 0;
+let animFrame = 0;
+let printingTimer = null;
+
+const menuItems = [
+  { label: 'Plate Clear', icon: 'check', screen: SCREENS.PLATE_CLEAR },
+  { label: 'Spool Assign', icon: 'spool', screen: SCREENS.SPOOL_ASSIGN },
+  { label: 'Queue', icon: 'printer', screen: SCREENS.QUEUE_PEEK },
+  { label: 'Settings', icon: null, screen: SCREENS.SETTINGS },
+];
+
+// ─── Screen Renderers ────────────────────────────────────────────────────────
+
+function renderHome() {
+  clearFB();
+
+  // Header: printer name + WiFi icon
+  drawText(printer.name, 1, 1, 1);
+  drawIcon('wifi', 112, 1);
+
+  // Divider
+  drawLine(0, 10, 127, 10);
+
+  if (printer.state === 'printing' || printer.state === 'paused') {
+    // Job name (truncated)
+    const jn = printer.jobName.length > 21 ? printer.jobName.slice(0, 20) + '~' : printer.jobName;
+    drawText(jn, 1, 14, 1);
+
+    // Progress bar
+    drawProgressBar(1, 25, 100, 8, printer.progress / 100);
+    drawText(printer.progress + '%', 104, 26, 1);
+
+    // Time remaining
+    drawText('ETA: ' + printer.timeLeft, 1, 37, 1);
+
+    // State
+    if (printer.state === 'paused') {
+      drawText('|| PAUSED', 70, 37, 1);
+    }
+
+    // Hint
+    drawText('Press for menu', 20, 55, 1);
+
+  } else if (printer.state === 'idle') {
+    drawText('IDLE', 1, 16, 2);
+    // AMS summary
+    drawText('AMS:', 1, 35, 1);
+    for (let i = 0; i < 4; i++) {
+      const s = printer.amsSlots[i];
+      const x = 28 + i * 25;
+      if (s.material) {
+        drawRect(x, 34, 20, 10);
+        drawText(s.material.slice(0, 3), x + 2, 36, 1);
+      } else {
+        drawRect(x, 34, 20, 10);
+        drawText('---', x + 4, 36, 1);
+      }
+    }
+    // Queue count
+    const qc = printer.queue.length;
+    drawText('Queue: ' + qc + ' job' + (qc !== 1 ? 's' : ''), 1, 50, 1);
+
+    drawText('Press for menu', 20, 55, 1);
+
+  } else if (printer.state === 'done') {
+    renderPrintDone();
+    return;
+  }
+
+  renderFB();
+}
+
+function renderMenu() {
+  clearFB();
+  drawText('MENU', 1, 1, 1);
+  drawLine(0, 10, 127, 10);
+
+  const visible = 4;
+  const start = Math.max(0, Math.min(menuIndex - 1, menuItems.length - visible));
+
+  for (let i = 0; i < visible && start + i < menuItems.length; i++) {
+    const idx = start + i;
+    const y = 14 + i * 13;
+    const item = menuItems[idx];
+
+    if (idx === menuIndex) {
+      drawRect(0, y - 1, 128, 12, true);
+      // Invert text
+      const saved = [...fb];
+      drawText(item.label, 12, y, 1);
+      drawIcon('arrow_r', 2, y + 1);
+      // XOR the text area to invert
+      for (let py = y - 1; py < y + 11; py++)
+        for (let px = 0; px < 128; px++)
+          fb[py * OLED_W + px] = fb[py * OLED_W + px] ? 0 : 1;
+    } else {
+      drawText(item.label, 12, y, 1);
+    }
+  }
+
+  // Scrollbar
+  if (menuItems.length > visible) {
+    const barH = Math.round(48 * visible / menuItems.length);
+    const barY = 14 + Math.round((48 - barH) * menuIndex / (menuItems.length - 1));
+    drawRect(125, barY, 2, barH, true);
+  }
+
+  renderFB();
+}
+
+function renderPlateClear() {
+  clearFB();
+  drawText('PLATE CLEAR', 1, 1, 1);
+  drawLine(0, 10, 127, 10);
+
+  drawTextCenter('Remove print from', 18, 1);
+  drawTextCenter('build plate, then', 28, 1);
+  drawTextCenter('press SELECT', 38, 1);
+
+  // Big confirm prompt
+  drawRect(24, 48, 80, 14);
+  drawTextCenter('CONFIRM CLEAR', 51, 1);
+
+  renderFB();
+}
+
+function renderPlateClearDone() {
+  clearFB();
+  drawIcon('check', 56, 10);
+  drawTextCenter('PLATE CLEARED', 26, 1);
+  drawTextCenter('Next job starting...', 40, 1);
+  drawTextCenter(printer.queue.length > 0 ? printer.queue[0].name.slice(0, 21) : '(queue empty)', 52, 1);
+  renderFB();
+}
+
+function renderSpoolAssign() {
+  clearFB();
+  drawText('SPOOL ASSIGN', 1, 1, 1);
+  drawLine(0, 10, 127, 10);
+
+  drawText('Select AMS slot:', 1, 14, 1);
+
+  for (let i = 0; i < 4; i++) {
+    const y = 26 + i * 10;
+    const s = printer.amsSlots[i];
+
+    if (i === selectedSlot) {
+      drawRect(0, y - 1, 128, 10, true);
+      const label = 'Slot ' + (i + 1) + ': ' + (s.material ? s.material + ' ' + s.color : 'Empty');
+      // Invert
+      drawText(label, 2, y, 1);
+      for (let py = y - 1; py < y + 9; py++)
+        for (let px = 0; px < 128; px++)
+          fb[py * OLED_W + px] = fb[py * OLED_W + px] ? 0 : 1;
+    } else {
+      const label = 'Slot ' + (i + 1) + ': ' + (s.material ? s.material + ' ' + s.color : 'Empty');
+      drawText(label, 2, y, 1);
+    }
+  }
+
+  renderFB();
+}
+
+function renderSpoolSelect() {
+  clearFB();
+  drawText('ASSIGN SLOT ' + (selectedSlot + 1), 1, 1, 1);
+  drawLine(0, 10, 127, 10);
+
+  const visible = 4;
+  const start = Math.max(0, Math.min(selectedSpool - 1, spoolCatalog.length - visible));
+
+  for (let i = 0; i < visible && start + i < spoolCatalog.length; i++) {
+    const idx = start + i;
+    const y = 14 + i * 13;
+    const s = spoolCatalog[idx];
+    const label = s.brand.slice(0, 6) + ' ' + s.material + ' ' + s.color;
+
+    if (idx === selectedSpool) {
+      drawRect(0, y - 1, 128, 12, true);
+      drawText(label.slice(0, 21), 2, y, 1);
+      for (let py = y - 1; py < y + 11; py++)
+        for (let px = 0; px < 128; px++)
+          fb[py * OLED_W + px] = fb[py * OLED_W + px] ? 0 : 1;
+    } else {
+      drawText(label.slice(0, 21), 2, y, 1);
+    }
+  }
+
+  // Weight on bottom
+  drawText(spoolCatalog[selectedSpool].weight, 1, 56, 1);
+
+  renderFB();
+}
+
+function renderQueuePeek() {
+  clearFB();
+  drawText('QUEUE (' + printer.queue.length + ')', 1, 1, 1);
+  drawLine(0, 10, 127, 10);
+
+  if (printer.queue.length === 0) {
+    drawTextCenter('Queue empty', 30, 1);
+    drawTextCenter('No jobs waiting', 42, 1);
+  } else {
+    for (let i = 0; i < Math.min(4, printer.queue.length); i++) {
+      const y = 14 + i * 13;
+      const j = printer.queue[i];
+      drawText((i + 1) + '. ' + j.name.slice(0, 17), 1, y, 1);
+      drawTextRight(j.time, y, 1);
+    }
+  }
+
+  renderFB();
+}
+
+function renderHMSError() {
+  clearFB();
+
+  // Flashing warning header
+  if (Math.floor(animFrame / 15) % 2 === 0) {
+    drawRect(0, 0, 128, 11, true);
+    drawText(' !! HMS ERROR !!', 8, 2, 1);
+    for (let py = 0; py < 11; py++)
+      for (let px = 0; px < 128; px++)
+        fb[py * OLED_W + px] = fb[py * OLED_W + px] ? 0 : 1;
+  } else {
+    drawIcon('warn', 2, 1);
+    drawText('HMS ERROR', 14, 2, 1);
+  }
+
+  drawLine(0, 12, 127, 12);
+
+  const err = printer.hmsErrors[hmsIndex];
+  if (err) {
+    drawText(err.short, 1, 16, 1);
+    drawText('Code: ' + err.code.slice(0, 18), 1, 28, 1);
+
+    // Error count
+    if (printer.hmsErrors.length > 1) {
+      drawText((hmsIndex + 1) + '/' + printer.hmsErrors.length, 1, 40, 1);
+      drawText('Scroll for more', 1, 50, 1);
+    }
+
+    drawText('[SEL]Detail [BCK]Ack', 1, 56, 1);
+  }
+
+  renderFB();
+}
+
+function renderHMSDetail() {
+  clearFB();
+  const err = printer.hmsErrors[hmsIndex];
+  if (!err) return;
+
+  drawText('HMS DETAIL', 1, 1, 1);
+  drawLine(0, 10, 127, 10);
+
+  drawText(err.short, 1, 14, 1);
+  drawText(err.code.slice(0, 21), 1, 26, 1);
+
+  // Word-wrap detail text
+  const words = err.detail.split(' ');
+  let line = '', ly = 38;
+  for (const w of words) {
+    if ((line + ' ' + w).length > 21) {
+      drawText(line, 1, ly, 1);
+      ly += 9;
+      line = w;
+      if (ly > 58) break;
+    } else {
+      line = line ? line + ' ' + w : w;
+    }
+  }
+  if (ly <= 58) drawText(line, 1, ly, 1);
+
+  renderFB();
+}
+
+function renderPrintDone() {
+  clearFB();
+  drawIcon('check', 56, 4);
+  drawTextCenter('PRINT COMPLETE', 18, 1);
+  drawTextCenter(printer.jobName.slice(0, 21), 30, 1);
+
+  drawRect(8, 42, 112, 14);
+  drawTextCenter('Clear plate + next', 45, 1);
+
+  drawText('[BCK] Dismiss', 20, 58, 1);
+  renderFB();
+}
+
+function renderSettings() {
+  clearFB();
+  drawText('SETTINGS', 1, 1, 1);
+  drawLine(0, 10, 127, 10);
+
+  drawText('Printer: ' + printer.name, 1, 14, 1);
+  drawText('WiFi: Connected', 1, 26, 1);
+  drawText('Backend: OK', 1, 38, 1);
+  drawText('FW: 1.0.0', 1, 50, 1);
+
+  renderFB();
+}
+
+// ─── Screen Manager ──────────────────────────────────────────────────────────
+
+function render() {
+  switch (currentScreen) {
+    case SCREENS.HOME: renderHome(); break;
+    case SCREENS.MENU: renderMenu(); break;
+    case SCREENS.PLATE_CLEAR: renderPlateClear(); break;
+    case SCREENS.SPOOL_ASSIGN: renderSpoolAssign(); break;
+    case SCREENS.SPOOL_SLOT: renderSpoolSelect(); break;
+    case SCREENS.QUEUE_PEEK: renderQueuePeek(); break;
+    case SCREENS.HMS_ERROR: renderHMSError(); break;
+    case SCREENS.HMS_DETAIL: renderHMSDetail(); break;
+    case SCREENS.PRINT_DONE: renderPrintDone(); break;
+    case SCREENS.SETTINGS: renderSettings(); break;
+  }
+  updateStatus();
+}
+
+function navigate(screen) {
+  screenStack.push(currentScreen);
+  currentScreen = screen;
+  render();
+}
+
+function goBack() {
+  if (screenStack.length > 0) {
+    currentScreen = screenStack.pop();
+  } else {
+    currentScreen = SCREENS.HOME;
+  }
+  menuIndex = 0;
+  render();
+}
+
+function handleSelect() {
+  switch (currentScreen) {
+    case SCREENS.HOME:
+      if (printer.state === 'done') {
+        // Clear plate action
+        printer.state = 'idle';
+        if (printer.queue.length > 0) printer.queue.shift();
+        render();
+        setTimeout(() => { currentScreen = SCREENS.HOME; render(); }, 1500);
+      } else {
+        menuIndex = 0;
+        navigate(SCREENS.MENU);
+      }
+      break;
+
+    case SCREENS.MENU:
+      const item = menuItems[menuIndex];
+      if (item.screen === SCREENS.SPOOL_ASSIGN) selectedSlot = 0;
+      navigate(item.screen);
+      break;
+
+    case SCREENS.PLATE_CLEAR:
+      // Show confirmation
+      clearFB();
+      renderPlateClearDone();
+      printer.state = 'idle';
+      setTimeout(() => { currentScreen = SCREENS.HOME; screenStack = []; render(); }, 2000);
+      break;
+
+    case SCREENS.SPOOL_ASSIGN:
+      selectedSpool = 0;
+      navigate(SCREENS.SPOOL_SLOT);
+      break;
+
+    case SCREENS.SPOOL_SLOT:
+      // Assign spool to slot
+      const spool = spoolCatalog[selectedSpool];
+      printer.amsSlots[selectedSlot] = {
+        slot: selectedSlot + 1,
+        material: spool.material,
+        color: spool.color,
+        spool: spool.brand + ' ' + spool.material,
+      };
+      // Go back to slot list
+      currentScreen = SCREENS.SPOOL_ASSIGN;
+      screenStack = [SCREENS.HOME, SCREENS.MENU];
+      render();
+      break;
+
+    case SCREENS.HMS_ERROR:
+      navigate(SCREENS.HMS_DETAIL);
+      break;
+
+    case SCREENS.HMS_DETAIL:
+      goBack();
+      break;
+
+    case SCREENS.PRINT_DONE:
+      printer.state = 'idle';
+      if (printer.queue.length > 0) printer.queue.shift();
+      currentScreen = SCREENS.HOME;
+      screenStack = [];
+      render();
+      break;
+
+    default:
+      goBack();
+  }
+}
+
+function handleScroll(dir) {
+  switch (currentScreen) {
+    case SCREENS.MENU:
+      menuIndex = Math.max(0, Math.min(menuItems.length - 1, menuIndex + dir));
+      break;
+    case SCREENS.SPOOL_ASSIGN:
+      selectedSlot = Math.max(0, Math.min(3, selectedSlot + dir));
+      break;
+    case SCREENS.SPOOL_SLOT:
+      selectedSpool = Math.max(0, Math.min(spoolCatalog.length - 1, selectedSpool + dir));
+      break;
+    case SCREENS.HMS_ERROR:
+      hmsIndex = Math.max(0, Math.min(printer.hmsErrors.length - 1, hmsIndex + dir));
+      break;
+  }
+  render();
+}
+
+function handleBack() {
+  if (currentScreen === SCREENS.HMS_ERROR) {
+    // ACK = dismiss errors
+    printer.hmsErrors = [];
+    hmsIndex = 0;
+    currentScreen = SCREENS.HOME;
+    screenStack = [];
+    render();
+  } else {
+    goBack();
+  }
+}
+
+function handleQuickClear() {
+  if (currentScreen === SCREENS.HOME && printer.state === 'idle') {
+    screenStack = [];
+    navigate(SCREENS.PLATE_CLEAR);
+  } else if (currentScreen === SCREENS.PLATE_CLEAR) {
+    handleSelect(); // confirm
+  }
+}
+
+// ─── Simulation Controls ─────────────────────────────────────────────────────
+
+function simSetState(state) {
+  printer.state = state;
+  if (state === 'printing') {
+    printer.progress = 42;
+    printer.timeLeft = '1h 23m';
+  }
+  currentScreen = SCREENS.HOME;
+  screenStack = [];
+  render();
+}
+
+function triggerHMS() {
+  const err = hmsDatabase[Math.floor(Math.random() * hmsDatabase.length)];
+  printer.hmsErrors.push(err);
+  hmsIndex = printer.hmsErrors.length - 1;
+  // HMS interrupts whatever you're doing
+  screenStack = [SCREENS.HOME];
+  currentScreen = SCREENS.HMS_ERROR;
+  render();
+}
+
+function triggerPrintDone() {
+  printer.state = 'done';
+  currentScreen = SCREENS.PRINT_DONE;
+  screenStack = [SCREENS.HOME];
+  render();
+}
+
+function updateStatus() {
+  const bar = document.getElementById('statusBar');
+  bar.textContent = `Screen: ${currentScreen} | Printer: ${printer.name} (${printer.state}) | Stack: [${screenStack.join('→')}]`;
+}
+
+// ─── Input Handling ──────────────────────────────────────────────────────────
+
+let encoderRot = 0;
+
+document.addEventListener('keydown', (e) => {
+  switch (e.key) {
+    case 'ArrowUp': handleScroll(-1); break;
+    case 'ArrowDown': handleScroll(1); break;
+    case 'Enter': handleSelect(); break;
+    case 'Escape': handleBack(); break;
+    case 'c': case 'C': handleQuickClear(); break;
+    case 'e': case 'E': triggerHMS(); break;
+    case 'r': case 'R': simSetState('idle'); break;
+  }
+});
+
+// Encoder wheel simulation
+document.getElementById('encoderKnob').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const dir = e.deltaY > 0 ? 1 : -1;
+  encoderRot += dir * 15;
+  document.querySelector('.notch').style.setProperty('--rot', encoderRot + 'deg');
+  handleScroll(dir);
+});
+
+document.getElementById('encoderKnob').addEventListener('click', () => handleSelect());
+document.getElementById('btnA').addEventListener('click', () => handleBack());
+document.getElementById('btnB').addEventListener('click', () => handleQuickClear());
+
+// Animation loop (for flashing HMS warning)
+let lastFrame = 0;
+function animLoop(ts) {
+  animFrame++;
+  if (currentScreen === SCREENS.HMS_ERROR && animFrame % 15 === 0) {
+    render();
+  }
+  requestAnimationFrame(animLoop);
+}
+requestAnimationFrame(animLoop);
+
+// ─── Init ────────────────────────────────────────────────────────────────────
+render();
+</script>
+</body>
+</html>
