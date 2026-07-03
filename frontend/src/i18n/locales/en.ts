@@ -7,6 +7,7 @@ export default {
     stats: 'Statistics',
     profiles: 'Profiles',
     maintenance: 'Maintenance',
+    devices: 'Devices',
     projects: 'Projects',
     inventory: 'Filament',
     files: 'File Manager',

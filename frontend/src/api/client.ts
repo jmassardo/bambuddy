@@ -7112,6 +7112,10 @@ export interface SpoolBuddyDevice {
   ip_address: string;
   backend_url?: string | null;
   firmware_version: string | null;
+  device_type: 'spoolbuddy' | 'printer-panel' | 'clear-plate' | string;
+  printer_id: number | null;
+  friendly_name: string | null;
+  location: string | null;
   has_nfc: boolean;
   has_scale: boolean;
   tare_offset: number;
@@ -7129,6 +7133,9 @@ export interface SpoolBuddyDevice {
   uptime_s: number;
   update_status: string | null;
   update_message: string | null;
+  target_firmware: string | null;
+  ota_status: string | null;
+  device_config: Record<string, unknown> | null;
   system_stats: {
     os?: { os?: string; kernel?: string; arch?: string; python?: string };
     cpu_temp_c?: number;
@@ -7139,6 +7146,8 @@ export interface SpoolBuddyDevice {
     system_uptime_s?: number;
   } | null;
   online: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface DaemonUpdateCheck {
