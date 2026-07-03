@@ -1526,7 +1526,7 @@ async def _get_device_printer_id(device_id: str, db: AsyncSession) -> int:
 async def device_printer_status(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_READ),
 ):
     """Get the assigned printer's real-time status (for printer-panel devices)."""
     from backend.app.models.printer import Printer
@@ -1571,7 +1571,7 @@ async def device_printer_status(
 async def device_plate_clear(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_CLEAR_PLATE),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_UPDATE),
 ):
     """Clear the build plate for the device's assigned printer."""
     from backend.app.models.printer import Printer
@@ -1604,7 +1604,7 @@ async def device_queue(
     device_id: str,
     limit: int = 3,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_READ),
 ):
     """Get the next queued jobs for the device's assigned printer."""
     from sqlalchemy.orm import selectinload
@@ -1642,7 +1642,7 @@ async def device_queue(
 async def device_hms_ack(
     device_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_UPDATE),
 ):
     """Acknowledge/clear HMS errors on the device's assigned printer."""
     from backend.app.services.printer_manager import printer_manager
