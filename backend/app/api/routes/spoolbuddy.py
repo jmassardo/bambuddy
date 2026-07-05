@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -298,6 +298,7 @@ async def unregister_device(
 async def device_heartbeat(
     device_id: str,
     req: HeartbeatRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_UPDATE),
 ):
@@ -356,7 +357,8 @@ async def device_heartbeat(
     ota_url = None
     ota_version = None
     if device.target_firmware and device.firmware_version != device.target_firmware:
-        ota_url = f"/firmware/{device.device_type}/{device.target_firmware}.bin"
+        base_url = str(request.base_url).rstrip("/")
+        ota_url = f"{base_url}/firmware/{device.device_type}/{device.target_firmware}.bin"
         ota_version = device.target_firmware
         if device.ota_status != "downloading":
             device.ota_status = "pending"
