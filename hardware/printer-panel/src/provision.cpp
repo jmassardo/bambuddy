@@ -3,6 +3,7 @@
 #include "pins.h"
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ArduinoJson.h>
 #include <DNSServer.h>
 #include <Preferences.h>
 
@@ -128,12 +129,30 @@ void Provisioning::startCaptivePortal() {
     portalServer->begin();
 
     Serial.println("[Provision] Portal running. Waiting for config...");
+    Serial.println("[Provision] You can also send JSON config via serial:");
+    Serial.println("  {\"ssid\":\"X\",\"pass\":\"X\",\"host\":\"X\",\"port\":8000,\"key\":\"X\",\"id\":\"panel-001\",\"printer\":3}");
 
     // Blink LED to indicate setup mode
     portalDone = false;
+    String serialBuf = "";
     while (!portalDone) {
         dnsServer->processNextRequest();
         portalServer->handleClient();
+
+        // Also check serial for JSON config
+        while (Serial.available()) {
+            char c = Serial.read();
+            if (c == '\n' || c == '\r') {
+                if (serialBuf.length() > 5 && serialBuf.indexOf('{') >= 0) {
+                    // Try to parse as config JSON
+                    _handleSerialConfig(serialBuf);
+                }
+                serialBuf = "";
+            } else {
+                serialBuf += c;
+            }
+        }
+
         // Blink LED
         digitalWrite(PIN_LED, (millis() / 500) % 2 == 0 ? LOW : HIGH);
         delay(1);
@@ -187,4 +206,46 @@ void Provisioning::_handleSave() {
 
 void Provisioning::_handleScan() {
     // Optional: scan for WiFi networks (future enhancement)
+}
+
+void Provisioning::_handleSerialConfig(const String& json) {
+    Serial.println("[Provision] Received serial config, parsing...");
+
+    // Use ArduinoJson for reliable parsing
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, json);
+    if (err) {
+        Serial.printf("[Provision] JSON parse error: %s\n", err.c_str());
+        return;
+    }
+
+    DeviceConfig cfg = {};
+    const char* ssid = doc["ssid"] | "";
+    const char* pass = doc["pass"] | "";
+    const char* host = doc["host"] | "";
+    uint16_t port = doc["port"] | 8000;
+    const char* key = doc["key"] | "";
+    const char* devid = doc["id"] | "panel-001";
+    int printer = doc["printer"] | -1;
+
+    strncpy(cfg.wifiSsid, ssid, sizeof(cfg.wifiSsid) - 1);
+    strncpy(cfg.wifiPass, pass, sizeof(cfg.wifiPass) - 1);
+    strncpy(cfg.serverHost, host, sizeof(cfg.serverHost) - 1);
+    cfg.serverPort = port;
+    strncpy(cfg.apiKey, key, sizeof(cfg.apiKey) - 1);
+    strncpy(cfg.deviceId, devid, sizeof(cfg.deviceId) - 1);
+    cfg.printerId = printer;
+    cfg.provisioned = true;
+
+    if (strlen(cfg.wifiSsid) == 0 || strlen(cfg.serverHost) == 0) {
+        Serial.println("[Provision] ERROR: ssid and host are required!");
+        return;
+    }
+
+    saveConfig(cfg);
+    Serial.printf("[Provision] Config saved! SSID=%s Host=%s:%d ID=%s Printer=%d\n",
+                  cfg.wifiSsid, cfg.serverHost, cfg.serverPort, cfg.deviceId, cfg.printerId);
+    Serial.println("[Provision] Rebooting in 2s...");
+    delay(2000);
+    ESP.restart();
 }

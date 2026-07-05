@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ArduinoJson.h>
 #include "config.h"
 #include "pins.h"
 #include "display.h"
@@ -52,8 +53,64 @@ void setup() {
 
     // Load config from NVS
     if (!provisioning.loadConfig(deviceCfg)) {
-        Serial.println("Device not provisioned — starting captive portal");
+        Serial.println("Device not provisioned.");
+        Serial.println("Option 1: Send JSON config via serial within 10s");
+        Serial.println("  Format: {\"ssid\":\"X\",\"pass\":\"X\",\"host\":\"X\",\"port\":8000,\"key\":\"X\",\"id\":\"panel-001\",\"printer\":3}");
+        Serial.println("Option 2: Connect to 'BamBuddy-Panel' WiFi and open 192.168.4.1");
+
+        // Wait 10s for serial JSON config
         display.showScreen(Screen::PROVISIONING);
+        uint32_t waitStart = millis();
+        String serialBuf = "";
+        while (millis() - waitStart < 10000) {
+            if (Serial.available()) {
+                char c = Serial.read();
+                if (c == '\n' || c == '\r') {
+                    if (serialBuf.length() > 5) break;  // Got a line
+                } else {
+                    serialBuf += c;
+                }
+            }
+            // Blink LED during wait
+            digitalWrite(PIN_LED, (millis() / 250) % 2 == 0 ? LOW : HIGH);
+            delay(1);
+        }
+        digitalWrite(PIN_LED, HIGH);  // LED off
+
+        if (serialBuf.length() > 5 && serialBuf.indexOf('{') >= 0) {
+            // Parse JSON config from serial
+            Serial.println("Received serial config, parsing...");
+            JsonDocument doc;
+            if (deserializeJson(doc, serialBuf) == DeserializationError::Ok) {
+                const char* ssid = doc["ssid"] | "";
+                const char* pass = doc["pass"] | "";
+                const char* host = doc["host"] | "";
+                uint16_t port = doc["port"] | 8000;
+                const char* key = doc["key"] | "";
+                const char* devid = doc["id"] | "panel-001";
+                int printer = doc["printer"] | -1;
+
+                strncpy(deviceCfg.wifiSsid, ssid, sizeof(deviceCfg.wifiSsid) - 1);
+                strncpy(deviceCfg.wifiPass, pass, sizeof(deviceCfg.wifiPass) - 1);
+                strncpy(deviceCfg.serverHost, host, sizeof(deviceCfg.serverHost) - 1);
+                deviceCfg.serverPort = port;
+                strncpy(deviceCfg.apiKey, key, sizeof(deviceCfg.apiKey) - 1);
+                strncpy(deviceCfg.deviceId, devid, sizeof(deviceCfg.deviceId) - 1);
+                deviceCfg.printerId = printer;
+                deviceCfg.provisioned = true;
+
+                provisioning.saveConfig(deviceCfg);
+                Serial.println("Config saved! Rebooting...");
+                delay(1000);
+                ESP.restart();
+                return;
+            } else {
+                Serial.println("JSON parse error! Starting captive portal...");
+            }
+        }
+
+        // No serial config received — fall through to captive portal
+        Serial.println("No serial config. Starting captive portal...");
         provisioning.startCaptivePortal();  // Blocks until config saved + reboot
         return;  // Never reached (reboot happens)
     }
@@ -99,6 +156,30 @@ void setup() {
 }
 
 void loop() {
+    // Serial command handler (factory reset, diagnostics)
+    if (Serial.available()) {
+        static String cmdBuf;
+        while (Serial.available()) {
+            char c = Serial.read();
+            if (c == '\n' || c == '\r') {
+                cmdBuf.trim();
+                if (cmdBuf == "reset") {
+                    Serial.println("Factory reset...");
+                    provisioning.factoryReset();
+                } else if (cmdBuf == "info") {
+                    Serial.printf("SSID='%s' host='%s:%d' id='%s' printer=%d\n",
+                        deviceCfg.wifiSsid, deviceCfg.serverHost,
+                        deviceCfg.serverPort, deviceCfg.deviceId, deviceCfg.printerId);
+                } else if (cmdBuf.length() > 0) {
+                    Serial.printf("Unknown cmd: '%s' (try: reset, info)\n", cmdBuf.c_str());
+                }
+                cmdBuf = "";
+            } else {
+                cmdBuf += c;
+            }
+        }
+    }
+
     // Network housekeeping (heartbeat, WiFi reconnect)
     network.loop();
 

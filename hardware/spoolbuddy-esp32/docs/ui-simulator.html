@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpoolBuddy UI Simulator</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.station {
+  background: #111;
+  border-radius: 16px;
+  padding: 30px;
+  display: flex;
+  gap: 40px;
+  align-items: center;
+  border: 2px solid #333;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+
+/* OLED Display */
+.display-bezel {
+  background: #0a0a0a;
+  border-radius: 8px;
+  padding: 8px;
+  border: 2px solid #333;
+}
+.oled {
+  width: 400px;
+  height: 200px;
+  background: #000;
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+  font-family: 'Courier New', monospace;
+}
+
+/* Status bar (yellow zone on real 2-color OLED) */
+.status-bar {
+  height: 30px;
+  background: #0a0a00;
+  border-bottom: 1px solid #222;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 12px;
+  font-size: 11px;
+}
+.status-bar .wifi { color: #4ade80; }
+.status-bar .nfc { color: #60a5fa; }
+.status-bar .weight { color: #fbbf24; }
+.status-bar .title { margin-left: auto; color: #888; font-size: 10px; }
+
+/* Main content area */
+.content {
+  height: 140px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+/* Footer hint bar */
+.footer {
+  height: 30px;
+  background: #0a0a0a;
+  border-top: 1px solid #111;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 10px;
+  color: #555;
+  gap: 20px;
+}
+.footer .hint-select { color: #4ade80; }
+.footer .hint-back { color: #f87171; }
+
+/* Menu items */
+.menu-item {
+  padding: 6px 8px;
+  font-size: 13px;
+  color: #aaa;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.menu-item.selected {
+  background: #222;
+  color: #fff;
+  border-left: 3px solid #4ade80;
+  padding-left: 10px;
+}
+.menu-item:hover { background: #1a1a1a; }
+
+/* Content text styles */
+.content h2 { font-size: 16px; color: #e0e0e0; margin-bottom: 4px; }
+.content .subtitle { font-size: 13px; color: #aaa; margin-bottom: 3px; }
+.content .detail { font-size: 11px; color: #666; margin-bottom: 2px; }
+.content .big-value { font-size: 32px; color: #fff; font-weight: bold; text-align: center; margin-top: 10px; }
+.content .big-label { font-size: 12px; color: #888; text-align: center; }
+.content .success { color: #4ade80; }
+.content .error { color: #f87171; }
+.content .info { color: #60a5fa; }
+.content .warn { color: #fbbf24; }
+
+/* Bulk scan counter */
+.scan-counter {
+  font-size: 48px;
+  color: #4ade80;
+  text-align: center;
+  font-weight: bold;
+  margin-top: 5px;
+}
+.scan-prompt { font-size: 12px; color: #888; text-align: center; margin-top: 5px; }
+
+/* Controls */
+.controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.encoder {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 40%, #3a3a3a, #1a1a1a);
+  border: 3px solid #555;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  transition: transform 0.1s;
+}
+.encoder:active { transform: scale(0.95); }
+.encoder::after {
+  content: '';
+  width: 12px;
+  height: 12px;
+  background: #555;
+  border-radius: 50%;
+  border: 1px solid #777;
+}
+.encoder-label { font-size: 9px; color: #666; text-align: center; }
+.encoder-arrows {
+  display: flex;
+  justify-content: space-between;
+  width: 120px;
+  font-size: 18px;
+  color: #555;
+}
+
+.btn {
+  width: 80px;
+  height: 38px;
+  border-radius: 8px;
+  border: 2px solid;
+  font-size: 11px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn:active { transform: scale(0.93); }
+.btn-select { background: #1a3a1a; border-color: #4ade80; color: #4ade80; }
+.btn-select:hover { background: #2a4a2a; }
+.btn-back { background: #3a1a1a; border-color: #f87171; color: #f87171; }
+.btn-back:hover { background: #4a2a2a; }
+
+.led {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 8px #4ade80;
+  margin-top: 10px;
+}
+
+/* Keyboard hints */
+.keyboard-hints {
+  margin-top: 20px;
+  font-size: 11px;
+  color: #555;
+  text-align: center;
+}
+.keyboard-hints kbd {
+  background: #333;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid #555;
+  color: #aaa;
+}
+
+/* Breadcrumb */
+.breadcrumb {
+  margin-bottom: 12px;
+  font-size: 10px;
+  color: #555;
+}
+</style>
+</head>
+<body>
+
+<div class="station">
+  <!-- Display -->
+  <div class="display-bezel">
+    <div class="oled" id="display">
+      <div class="status-bar">
+        <span class="wifi">WiFi ✓</span>
+        <span class="nfc">NFC ✓</span>
+        <span class="weight" id="status-weight">832g</span>
+        <span class="title">SpoolBuddy</span>
+      </div>
+      <div class="content" id="content"></div>
+      <div class="footer" id="footer">
+        <span>↻ Scroll</span>
+        <span class="hint-select">● SELECT</span>
+        <span class="hint-back">◄ BACK</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <div class="btn btn-select" id="btn-select" onclick="handleSelect()">SELECT</div>
+    <div class="encoder-arrows"><span>◄</span><span>►</span></div>
+    <div class="encoder" id="encoder" onclick="handleSelect()"></div>
+    <div class="encoder-label">scroll ↕ or click</div>
+    <div class="btn btn-back" id="btn-back" onclick="handleBack()">BACK</div>
+    <div class="led" id="led"></div>
+  </div>
+</div>
+
+<div class="keyboard-hints">
+  <kbd>↑</kbd> <kbd>↓</kbd> Scroll &nbsp;|&nbsp; 
+  <kbd>Enter</kbd> Select &nbsp;|&nbsp; 
+  <kbd>Esc</kbd> / <kbd>Backspace</kbd> Back &nbsp;|&nbsp;
+  <kbd>S</kbd> Simulate scan
+</div>
+
+<script>
+// ═══════════════ STATE ═══════════════
+let currentScreen = 'home';
+let menuIndex = 0;
+let navStack = [];
+let bulkCount = 0;
+let currentSpool = {
+  material: 'Prusament PLA',
+  color: 'Galaxy Black',
+  weight: 832,
+  printer: 'Bambu X1C #3',
+  id: 'SP-00A4'
+};
+
+// ═══════════════ SCREEN DEFINITIONS ═══════════════
+const screens = {
+  home: {
+    type: 'menu',
+    items: [
+      { label: '📋 Inventory', action: () => navigate('inventory') },
+      { label: '📥 Bulk Check-In', action: () => navigate('bulk_setup') },
+      { label: '🖨️ Assign to Printer', action: () => navigate('assign_printer') },
+      { label: '⚖️ Tare Scale', action: () => { navigate('tare'); } },
+      { label: '⚙️ Settings', action: () => navigate('settings') },
+    ],
+    footer: '↻ Scroll   ● Open   Place spool to scan'
+  },
+
+  spool_detected: {
+    type: 'detail',
+    render: () => `
+      <h2>${currentSpool.material}</h2>
+      <div class="subtitle">${currentSpool.color} — ${currentSpool.weight}g</div>
+      <div class="detail">Printer: ${currentSpool.printer}</div>
+      <div class="detail">ID: ${currentSpool.id}</div>
+    `,
+    footer: '● Actions   ◄ Dismiss',
+    onSelect: () => navigate('spool_actions')
+  },
+
+  spool_actions: {
+    type: 'menu',
+    items: [
+      { label: '⚖️ Update Weight', action: () => navigate('update_weight') },
+      { label: '🖨️ Assign to Printer', action: () => navigate('assign_printer') },
+      { label: '🔄 Mark Refilled', action: () => navigate('refill') },
+      { label: '🗑️ Remove from Inventory', action: () => navigate('confirm_remove') },
+    ],
+    footer: '↻ Scroll   ● Confirm   ◄ Back'
+  },
+
+  inventory: {
+    type: 'menu',
+    items: [
+      { label: 'Prusament PLA — Galaxy Black (832g)', action: () => { currentSpool = {material:'Prusament PLA',color:'Galaxy Black',weight:832,printer:'Bambu X1C #3',id:'SP-00A4'}; navigate('spool_detected'); }},
+      { label: 'Prusament PLA — Prusa Orange (640g)', action: () => { currentSpool = {material:'Prusament PLA',color:'Prusa Orange',weight:640,printer:'Unassigned',id:'SP-00A5'}; navigate('spool_detected'); }},
+      { label: 'eSUN ABS+ — Black (1100g)', action: () => { currentSpool = {material:'eSUN ABS+',color:'Black',weight:1100,printer:'Bambu P1S #1',id:'SP-00B1'}; navigate('spool_detected'); }},
+      { label: 'Polymaker PETG — Blue (450g)', action: () => { currentSpool = {material:'Polymaker PETG',color:'Blue',weight:450,printer:'Bambu X1C #2',id:'SP-00C3'}; navigate('spool_detected'); }},
+      { label: 'Hatchbox PLA — White (920g)', action: () => { currentSpool = {material:'Hatchbox PLA',color:'White',weight:920,printer:'Unassigned',id:'SP-00D7'}; navigate('spool_detected'); }},
+    ],
+    footer: '↻ Browse   ● Details   ◄ Back'
+  },
+
+  bulk_setup: {
+    type: 'menu',
+    items: [
+      { label: 'Brand: Prusament', action: () => navigate('bulk_brand') },
+      { label: 'Material: PLA', action: () => navigate('bulk_material') },
+      { label: 'Color: Galaxy Black', action: () => navigate('bulk_color') },
+      { label: '▶ Start Scanning', action: () => { bulkCount = 0; navigate('bulk_scan'); } },
+    ],
+    footer: '↻ Change   ● Edit/Start   ◄ Cancel'
+  },
+
+  bulk_brand: {
+    type: 'menu',
+    items: [
+      { label: '✓ Prusament', action: () => handleBack() },
+      { label: '  eSUN', action: () => handleBack() },
+      { label: '  Polymaker', action: () => handleBack() },
+      { label: '  Hatchbox', action: () => handleBack() },
+      { label: '  Bambu Lab', action: () => handleBack() },
+    ],
+    footer: '↻ Scroll   ● Select   ◄ Cancel'
+  },
+
+  bulk_material: {
+    type: 'menu',
+    items: [
+      { label: '✓ PLA', action: () => handleBack() },
+      { label: '  ABS', action: () => handleBack() },
+      { label: '  PETG', action: () => handleBack() },
+      { label: '  TPU', action: () => handleBack() },
+      { label: '  ASA', action: () => handleBack() },
+    ],
+    footer: '↻ Scroll   ● Select   ◄ Cancel'
+  },
+
+  bulk_color: {
+    type: 'menu',
+    items: [
+      { label: '✓ Galaxy Black', action: () => handleBack() },
+      { label: '  Prusa Orange', action: () => handleBack() },
+      { label: '  White', action: () => handleBack() },
+      { label: '  Red', action: () => handleBack() },
+      { label: '  Blue', action: () => handleBack() },
+    ],
+    footer: '↻ Scroll   ● Select   ◄ Cancel'
+  },
+
+  bulk_scan: {
+    type: 'custom',
+    render: () => `
+      <div class="big-label">BULK CHECK-IN</div>
+      <div class="scan-counter">${bulkCount}</div>
+      <div class="scan-prompt">Place spool on reader to scan...</div>
+      <div class="detail" style="text-align:center;margin-top:5px">Prusament PLA — Galaxy Black</div>
+    `,
+    footer: 'Press S to simulate scan   ◄ Done',
+    onScan: () => { bulkCount++; render(); flashLED('#4ade80'); }
+  },
+
+  assign_printer: {
+    type: 'menu',
+    items: [
+      { label: '🖨️ Bambu X1C #1', action: () => navigate('assigned_confirm') },
+      { label: '🖨️ Bambu X1C #2', action: () => navigate('assigned_confirm') },
+      { label: '🖨️ Bambu X1C #3', action: () => navigate('assigned_confirm') },
+      { label: '🖨️ Bambu P1S #1', action: () => navigate('assigned_confirm') },
+      { label: '  Unassign', action: () => navigate('assigned_confirm') },
+    ],
+    footer: '↻ Scroll   ● Assign   ◄ Cancel'
+  },
+
+  assigned_confirm: {
+    type: 'custom',
+    render: () => `
+      <div style="text-align:center;margin-top:20px">
+        <div class="success" style="font-size:24px">✓</div>
+        <h2 class="success">Assigned!</h2>
+        <div class="subtitle" style="margin-top:8px">Spool assigned to printer</div>
+      </div>
+    `,
+    footer: '● OK',
+    onSelect: () => handleBack(),
+    autoBack: 2000
+  },
+
+  update_weight: {
+    type: 'custom',
+    render: () => `
+      <div style="text-align:center;margin-top:10px">
+        <div class="big-label">CURRENT WEIGHT</div>
+        <div class="big-value">${currentSpool.weight}g</div>
+        <div class="detail" style="margin-top:8px">Place spool on scale</div>
+        <div class="success" style="font-size:11px;margin-top:4px">✓ Stable reading</div>
+      </div>
+    `,
+    footer: '● Save weight   ◄ Cancel',
+    onSelect: () => navigate('weight_saved')
+  },
+
+  weight_saved: {
+    type: 'custom',
+    render: () => `
+      <div style="text-align:center;margin-top:20px">
+        <div class="success" style="font-size:24px">✓</div>
+        <h2 class="success">Weight Updated</h2>
+        <div class="subtitle" style="margin-top:8px">${currentSpool.weight}g saved</div>
+      </div>
+    `,
+    footer: '● OK',
+    onSelect: () => { navStack = ['home']; navigate('home'); },
+    autoBack: 2000
+  },
+
+  refill: {
+    type: 'custom',
+    render: () => `
+      <div style="text-align:center;margin-top:10px">
+        <div class="warn" style="font-size:20px">🔄</div>
+        <h2>Mark as Refilled?</h2>
+        <div class="subtitle" style="margin-top:8px">${currentSpool.material}</div>
+        <div class="detail">${currentSpool.color} — ${currentSpool.id}</div>
+        <div class="detail" style="margin-top:6px">Weight will be reset to current reading</div>
+      </div>
+    `,
+    footer: '● Confirm   ◄ Cancel',
+    onSelect: () => navigate('refill_done')
+  },
+
+  refill_done: {
+    type: 'custom',
+    render: () => `
+      <div style="text-align:center;margin-top:20px">
+        <div class="success" style="font-size:24px">✓</div>
+        <h2 class="success">Spool Refilled</h2>
+        <div class="subtitle" style="margin-top:8px">Weight reset to ${currentSpool.weight}g</div>
+      </div>
+    `,
+    footer: '● OK',
+    onSelect: () => { navStack = ['home']; navigate('home'); },
+    autoBack: 2000
+  },
+
+  confirm_remove: {
+    type: 'custom',
+    render: () => `
+      <div style="text-align:center;margin-top:10px">
+        <div class="error" style="font-size:20px">⚠️</div>
+        <h2 class="error">Remove Spool?</h2>
+        <div class="subtitle" style="margin-top:8px">${currentSpool.material} — ${currentSpool.color}</div>
+        <div class="detail">${currentSpool.id}</div>
+        <div class="detail error" style="margin-top:6px">This cannot be undone</div>
+      </div>
+    `,
+    footer: '● Confirm Remove   ◄ Cancel',
+    onSelect: () => navigate('removed_confirm')
+  },
+
+  removed_confirm: {
+    type: 'custom',
+    render: () => `
+      <div style="text-align:center;margin-top:20px">
+        <div class="error" style="font-size:24px">✓</div>
+        <h2>Spool Removed</h2>
+        <div class="subtitle" style="margin-top:8px">Removed from inventory</div>
+      </div>
+    `,
+    footer: '● OK',
+    onSelect: () => { navStack = ['home']; navigate('home'); },
+    autoBack: 2000
+  },
+
+  tare: {
+    type: 'custom',
+    render: () => `
+      <div style="text-align:center;margin-top:10px">
+        <div class="info" style="font-size:20px">⚖️</div>
+        <h2>Tare Scale</h2>
+        <div class="subtitle" style="margin-top:8px">Remove all items from scale</div>
+        <div class="detail" style="margin-top:10px">Current reading: 3g</div>
+        <div class="detail">Press SELECT when empty</div>
+      </div>
+    `,
+    footer: '● Tare Now   ◄ Cancel',
+    onSelect: () => navigate('tare_done')
+  },
+
+  tare_done: {
+    type: 'custom',
+    render: () => `
+      <div style="text-align:center;margin-top:20px">
+        <div class="success" style="font-size:24px">✓</div>
+        <h2 class="success">Scale Tared</h2>
+        <div class="subtitle" style="margin-top:8px">Zero point saved</div>
+      </div>
+    `,
+    footer: '● OK',
+    onSelect: () => { navStack = ['home']; navigate('home'); },
+    autoBack: 2000
+  },
+
+  settings: {
+    type: 'menu',
+    items: [
+      { label: '📶 WiFi: iot', action: () => {} },
+      { label: '🌐 Backend: nuc1.lab.dxrf.com', action: () => {} },
+      { label: '🔧 Calibrate Scale', action: () => navigate('tare') },
+      { label: '📊 Device Info', action: () => navigate('device_info') },
+      { label: '🔄 Restart', action: () => {} },
+    ],
+    footer: '↻ Scroll   ● Open   ◄ Back'
+  },
+
+  device_info: {
+    type: 'custom',
+    render: () => `
+      <div class="detail">Device: sb-0000aaed0042</div>
+      <div class="detail">Firmware: v0.1.0</div>
+      <div class="detail">IP: 192.168.40.119</div>
+      <div class="detail">NFC: PN5180 v0.4 ✓</div>
+      <div class="detail">Scale: HX711 ✓ (cal: 0.000986)</div>
+      <div class="detail">Uptime: 2h 14m</div>
+      <div class="detail">Free heap: 245 KB</div>
+    `,
+    footer: '◄ Back'
+  }
+};
+
+// ═══════════════ NAVIGATION ═══════════════
+function navigate(screen) {
+  if (currentScreen !== screen) {
+    navStack.push(currentScreen);
+  }
+  currentScreen = screen;
+  menuIndex = 0;
+  render();
+
+  // Auto-back for confirmation screens
+  const s = screens[screen];
+  if (s && s.autoBack) {
+    setTimeout(() => {
+      if (currentScreen === screen) handleBack();
+    }, s.autoBack);
+  }
+}
+
+function handleBack() {
+  if (navStack.length > 0) {
+    currentScreen = navStack.pop();
+    menuIndex = 0;
+    render();
+  }
+}
+
+function handleSelect() {
+  const screen = screens[currentScreen];
+  if (!screen) return;
+
+  if (screen.type === 'menu' && screen.items[menuIndex]) {
+    screen.items[menuIndex].action();
+  } else if (screen.onSelect) {
+    screen.onSelect();
+  }
+}
+
+function handleScroll(direction) {
+  const screen = screens[currentScreen];
+  if (!screen || screen.type !== 'menu') return;
+
+  menuIndex += direction;
+  if (menuIndex < 0) menuIndex = screen.items.length - 1;
+  if (menuIndex >= screen.items.length) menuIndex = 0;
+  render();
+}
+
+function handleScan() {
+  const screen = screens[currentScreen];
+  if (screen && screen.onScan) {
+    screen.onScan();
+  } else {
+    // Simulate spool detection from any screen
+    navigate('spool_detected');
+    flashLED('#60a5fa');
+  }
+}
+
+// ═══════════════ RENDER ═══════════════
+function render() {
+  const screen = screens[currentScreen];
+  if (!screen) return;
+
+  const content = document.getElementById('content');
+  const footer = document.getElementById('footer');
+
+  if (screen.type === 'menu') {
+    const visibleItems = getVisibleItems(screen.items, menuIndex, 4);
+    content.innerHTML = visibleItems.map((item, i) => {
+      const actualIndex = screen.items.indexOf(item);
+      return `<div class="menu-item ${actualIndex === menuIndex ? 'selected' : ''}">${item.label}</div>`;
+    }).join('');
+  } else if (screen.type === 'detail' || screen.type === 'custom') {
+    content.innerHTML = screen.render();
+  }
+
+  footer.innerHTML = screen.footer || '';
+}
+
+function getVisibleItems(items, selected, maxVisible) {
+  if (items.length <= maxVisible) return items;
+  let start = Math.max(0, selected - Math.floor(maxVisible / 2));
+  if (start + maxVisible > items.length) start = items.length - maxVisible;
+  return items.slice(start, start + maxVisible);
+}
+
+function flashLED(color) {
+  const led = document.getElementById('led');
+  led.style.background = color;
+  led.style.boxShadow = `0 0 12px ${color}`;
+  setTimeout(() => {
+    led.style.background = '#4ade80';
+    led.style.boxShadow = '0 0 8px #4ade80';
+  }, 500);
+}
+
+// ═══════════════ INPUT ═══════════════
+document.addEventListener('keydown', (e) => {
+  switch(e.key) {
+    case 'ArrowUp': handleScroll(-1); break;
+    case 'ArrowDown': handleScroll(1); break;
+    case 'Enter': handleSelect(); break;
+    case 'Escape':
+    case 'Backspace': handleBack(); e.preventDefault(); break;
+    case 's':
+    case 'S': handleScan(); break;
+  }
+});
+
+// Mouse wheel on encoder
+document.getElementById('encoder').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  handleScroll(e.deltaY > 0 ? 1 : -1);
+});
+
+// Mouse wheel anywhere on display
+document.querySelector('.oled').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  handleScroll(e.deltaY > 0 ? 1 : -1);
+});
+
+// Initial render
+render();
+</script>
+</body>
+</html>

@@ -5,16 +5,36 @@
 #include <ArduinoJson.h>
 
 void ApiClient::begin(const char* ssid, const char* password) {
+    WiFi.disconnect(true);  // Clear any stale connection state
+    delay(100);
     WiFi.mode(WIFI_STA);
+    delay(500);  // Give radio time to stabilize in STA mode
+
+    Serial.printf("[WiFi] Connecting to '%s'...\n", ssid);
     WiFi.begin(ssid, password);
 
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED && (millis() - start) < WIFI_CONNECT_TIMEOUT) {
-        delay(250);
+        if ((millis() - start) % 3000 < 250) {
+            Serial.printf("[WiFi] status=%d elapsed=%lums\n", WiFi.status(), millis() - start);
+        }
+        delay(100);
     }
     _wifiConnected = (WiFi.status() == WL_CONNECTED);
     if (_wifiConnected) {
         _rssi = WiFi.RSSI();
+        Serial.printf("[WiFi] Connected! IP=%s RSSI=%d\n",
+                      WiFi.localIP().toString().c_str(), _rssi);
+    } else {
+        Serial.printf("[WiFi] FAILED after %lums (status=%d)\n",
+                      millis() - start, WiFi.status());
+        // Diagnostic scan
+        Serial.println("[WiFi] Scanning for available networks...");
+        int n = WiFi.scanNetworks();
+        for (int i = 0; i < n && i < 10; i++) {
+            Serial.printf("  '%s' ch=%d rssi=%d\n", WiFi.SSID(i).c_str(), WiFi.channel(i), WiFi.RSSI(i));
+        }
+        WiFi.scanDelete();
     }
 }
 
@@ -63,7 +83,7 @@ bool ApiClient::registerDevice() {
     String body;
     serializeJson(doc, body);
 
-    String url = _buildUrl("/api/v1/spoolbuddy/register");
+    String url = _buildUrl("/api/v1/spoolbuddy/devices/register");
     String response;
     return _httpPost(url.c_str(), body.c_str(), response);
 }
@@ -77,7 +97,7 @@ bool ApiClient::sendHeartbeat() {
     String body;
     serializeJson(doc, body);
 
-    String url = _buildUrl(String("/api/v1/spoolbuddy/" + String(_deviceId) + "/heartbeat").c_str());
+    String url = _buildUrl(String("/api/v1/spoolbuddy/devices/" + String(_deviceId) + "/heartbeat").c_str());
     String response;
     if (!_httpPost(url.c_str(), body.c_str(), response)) return false;
 
@@ -86,7 +106,8 @@ bool ApiClient::sendHeartbeat() {
     if (deserializeJson(respDoc, response) == DeserializationError::Ok) {
         // Check for OTA
         if (respDoc["ota_url"].is<const char*>()) {
-            strncpy(_otaUrl, respDoc["ota_url"].as<const char*>(), sizeof(_otaUrl) - 1);
+            String fullUrl = String("http://") + _serverHost + ":" + String(_serverPort) + respDoc["ota_url"].as<const char*>();
+            strncpy(_otaUrl, fullUrl.c_str(), sizeof(_otaUrl) - 1);
         }
         // Check for config update (printer_id change)
         if (respDoc["config_update"].is<JsonObject>()) {

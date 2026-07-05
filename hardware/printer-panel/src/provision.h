@@ -45,4 +45,5 @@ private:
     void _handleRoot();
     void _handleSave();
     void _handleScan();
+    void _handleSerialConfig(const String& json);
 };

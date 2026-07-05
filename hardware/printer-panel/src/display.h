@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include "config.h"
+#include "pins.h"
 
 // Screen IDs matching the UI simulator flow
 enum class Screen {
@@ -60,7 +61,7 @@ public:
     void showToast(const char* msg, uint16_t durationMs = 2000);
 
 private:
-    U8G2_SSD1306_128X64_NONAME_F_HW_I2C _u8g2{U8G2_R0, U8X8_PIN_NONE};
+    U8G2_SSD1306_128X64_NONAME_F_SW_I2C _u8g2{U8G2_R0, PIN_OLED_SCL, PIN_OLED_SDA, U8X8_PIN_NONE};
 
     Screen _screen = Screen::BOOT;
     uint32_t _lastActivity = 0;

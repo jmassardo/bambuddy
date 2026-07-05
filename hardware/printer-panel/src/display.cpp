@@ -1,6 +1,5 @@
 #include "display.h"
 #include "pins.h"
-#include <Wire.h>
 
 const char* const Display::MENU_LABELS[MENU_ITEMS] = {
     "Plate Clear",
@@ -12,7 +11,6 @@ const char* const Display::MENU_LABELS[MENU_ITEMS] = {
 };
 
 void Display::begin() {
-    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
     _u8g2.begin();
     _u8g2.setContrast(180);
     _lastActivity = millis();

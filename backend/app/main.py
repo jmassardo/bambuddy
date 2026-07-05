@@ -6801,6 +6801,17 @@ if app_settings.static_dir.exists() and any(app_settings.static_dir.iterdir()):
             name="fonts",
         )
 
+# Serve ESP32 firmware binaries for OTA updates
+from backend.app.core.paths import resolve_data_dir
+
+_firmware_dir = resolve_data_dir() / "firmware"
+if _firmware_dir.exists():
+    app.mount(
+        "/firmware",
+        StaticFiles(directory=_firmware_dir),
+        name="firmware",
+    )
+
 
 @app.get("/")
 async def serve_frontend():
