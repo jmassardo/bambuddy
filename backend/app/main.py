@@ -6917,6 +6917,14 @@ async def serve_gcode_viewer_file(file_path: str) -> FileResponse:
     return _gcode_viewer_response(file_path)
 
 
+# Serve firmware binaries for OTA updates
+from backend.app.core.config import _data_dir as _ota_data_dir
+
+_fw_dir = _ota_data_dir / "firmware"
+if _fw_dir.is_dir():
+    app.mount("/firmware", StaticFiles(directory=_fw_dir), name="firmware")
+
+
 # Catch-all route for React Router (must be last)
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
