@@ -84,6 +84,7 @@ class HeartbeatResponse(BaseModel):
     display_brightness: int = 100
     display_blank_timeout: int = 0
     ssh_public_key: str | None = None
+    ota_version: str | None = None
 
 
 # --- NFC schemas ---

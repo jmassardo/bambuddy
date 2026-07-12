@@ -4,8 +4,10 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -277,6 +279,38 @@ async def unregister_device(
     return {"status": "deleted", "device_id": device_id}
 
 
+def _parse_version_tuple(version: str) -> tuple[int, ...]:
+    """Parse a dotted version string into a tuple of ints for comparison."""
+    return tuple(int(x) for x in re.findall(r"\d+", version))
+
+
+def _get_latest_firmware(device_type: str, current_version: str) -> str | None:
+    """Scan firmware directory for the newest .bin newer than current_version."""
+    from backend.app.core.config import _data_dir
+
+    fw_dir = _data_dir / "firmware" / device_type
+    if not fw_dir.is_dir():
+        return None
+
+    current = _parse_version_tuple(current_version)
+    best_version: str | None = None
+    best_tuple: tuple[int, ...] = current
+
+    for f in fw_dir.iterdir():
+        if not f.suffix == ".bin":
+            continue
+        ver_str = f.stem  # e.g. "0.8.0"
+        try:
+            ver_tuple = _parse_version_tuple(ver_str)
+        except (ValueError, TypeError):
+            continue
+        if ver_tuple > best_tuple:
+            best_tuple = ver_tuple
+            best_version = ver_str
+
+    return best_version
+
+
 @router.post("/devices/{device_id}/heartbeat", response_model=HeartbeatResponse)
 async def device_heartbeat(
     device_id: str,
@@ -359,6 +393,15 @@ async def device_heartbeat(
     except Exception:
         pass
 
+    # Check for newer ESP firmware
+    ota_version: str | None = None
+    device_fw = device.firmware_version or "0.0.0"
+    device_type = "spoolbuddy"
+    try:
+        ota_version = _get_latest_firmware(device_type, device_fw)
+    except Exception as exc:
+        logger.debug("Firmware version check failed: %s", exc)
+
     return HeartbeatResponse(
         pending_command=pending,
         pending_write_payload=pending_write,
@@ -368,6 +411,7 @@ async def device_heartbeat(
         display_brightness=device.display_brightness,
         display_blank_timeout=device.display_blank_timeout,
         ssh_public_key=ssh_public_key,
+        ota_version=ota_version,
     )
 
 
