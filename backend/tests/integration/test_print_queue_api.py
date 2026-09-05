@@ -1030,6 +1030,33 @@ class TestQueueStartEndpoint:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_start_scheduler_held_model_item_releases_printer(
+        self, async_client: AsyncClient, queue_item_factory, db_session
+    ):
+        """Retrying an Any-model hold must not leave it pinned to that printer."""
+        item = await queue_item_factory(
+            target_model="X1C",
+            manual_start=True,
+            waiting_reason="The printer did not start this job; review the printer and start manually.",
+            error_message="Previous start failed",
+            ams_mapping="[0]",
+            nozzle_mapping="[0]",
+        )
+        item_id = item.id
+        item_type = type(item)
+
+        response = await async_client.post(f"/api/v1/queue/{item_id}/start")
+        assert response.status_code == 200
+
+        db_session.expire_all()
+        persisted = await db_session.get(item_type, item_id)
+        assert persisted.manual_start is False
+        assert persisted.printer_id is None
+        assert persisted.ams_mapping is None
+        assert persisted.nozzle_mapping is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_start_queue_item_with_cost_center_requires_estimated_cost(
         self, async_client: AsyncClient, queue_item_factory, db_session
     ):

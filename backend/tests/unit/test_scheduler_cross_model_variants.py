@@ -376,6 +376,100 @@ async def test_existing_scheduler_hold_excludes_printer_on_next_pass(queue_db):
     assert next_item.printer_id is None
 
 
+@pytest.mark.asyncio
+async def test_assigned_pending_item_reserves_printer_before_unassigned_items(queue_db):
+    """SQLite sorts NULL before integers unless NULLS LAST is explicit.
+
+    An unassigned model job must not claim a printer that already has a pending
+    pinned job merely because the matcher row was visited first.
+    """
+    async with queue_db.session_maker() as db:
+        pinned_file = LibraryFile(
+            filename="pinned.gcode.3mf",
+            file_path="/library/pinned.gcode.3mf",
+            file_size=10,
+            file_type="gcode.3mf",
+            file_metadata={"sliced_for_model": "H2S"},
+        )
+        db.add(pinned_file)
+        await db.flush()
+        db.add(
+            PrintQueueItem(
+                status="pending",
+                position=2,
+                printer_id=1,
+                target_model="H2S",
+                library_file_id=pinned_file.id,
+            )
+        )
+        await db.commit()
+
+    unassigned_id = await _add_variant_item(queue_db, [{"model": "H2S"}])
+    scheduler = PrintScheduler()
+
+    async def finder(_db, _model, exclude_ids, *_args, **_kwargs):
+        assert 1 in exclude_ids
+        return None, "No idle H2S printer"
+
+    with patch.object(scheduler, "_is_printer_idle", return_value=True):
+        await _run_check_queue(queue_db, scheduler, AsyncMock(side_effect=finder))
+
+    unassigned = await _get_item(queue_db, unassigned_id)
+    assert unassigned.printer_id is None
+
+
+@pytest.mark.asyncio
+async def test_filament_blocked_pinned_item_reserves_printer_for_rest_of_pass(queue_db):
+    """A fixed assignment blocked on filament must reserve its printer just as
+    a newly matched model-based assignment does."""
+    async with queue_db.session_maker() as db:
+        pinned_file = LibraryFile(
+            filename="pinned.gcode.3mf",
+            file_path="/library/pinned.gcode.3mf",
+            file_size=10,
+            file_type="gcode.3mf",
+            file_metadata={"sliced_for_model": "H2S"},
+        )
+        db.add(pinned_file)
+        await db.flush()
+        pinned = PrintQueueItem(
+            status="pending",
+            position=1,
+            printer_id=1,
+            target_model="H2S",
+            library_file_id=pinned_file.id,
+        )
+        db.add(pinned)
+        await db.commit()
+        pinned_id = pinned.id
+
+    unassigned_id = await _add_variant_item(queue_db, [{"model": "H2S"}])
+    scheduler = PrintScheduler()
+
+    async def finder(_db, _model, exclude_ids, *_args, **_kwargs):
+        assert 1 in exclude_ids
+        return None, "No idle H2S printer"
+
+    async def block(_db, item):
+        if item.id != pinned_id:
+            return False
+        item.manual_start = True
+        item.waiting_reason = "Insufficient filament on the assigned printer; review the spool and start manually."
+        await _db.commit()
+        return True
+
+    with patch.object(scheduler, "_is_printer_idle", return_value=True):
+        await _run_check_queue(
+            queue_db,
+            scheduler,
+            AsyncMock(side_effect=finder),
+            filament_blocker=AsyncMock(side_effect=block),
+        )
+
+    unassigned = await _get_item(queue_db, unassigned_id)
+    assert unassigned.printer_id is None
+
+
 async def _get_item(ctx, item_id):
     async with ctx.session_maker() as db:
         return (await db.execute(select(PrintQueueItem).where(PrintQueueItem.id == item_id))).scalar_one()

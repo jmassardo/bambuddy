@@ -2425,11 +2425,21 @@ async def start_queue_item(
             )
 
     # Print Anyway / no deficit: clear the flags and let the scheduler dispatch.
+    # A scheduler-selected model job must return to the shared printer pool
+    # when its hold is released. Keeping the old assignment pinned multiple
+    # retried jobs to one printer while other matching printers sat idle.
+    from backend.app.services.print_scheduler import is_scheduler_printer_hold
+
+    release_scheduler_assignment = item.target_model is not None and is_scheduler_printer_hold(item.waiting_reason)
     item.manual_start = False
     item.filament_short = False
     item.waiting_reason = None
     item.error_message = None
     item.dispatch_attempts = 0
+    if release_scheduler_assignment:
+        item.printer_id = None
+        item.ams_mapping = None
+        item.nozzle_mapping = None
     # Persist the user's "Print Anyway" decision so the scheduler does not
     # immediately re-flag this item on the next tick (#1698-followup). The
     # pre-fix behaviour bounced between "user said anyway" and
