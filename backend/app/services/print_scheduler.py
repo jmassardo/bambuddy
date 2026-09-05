@@ -135,6 +135,12 @@ _FILAMENT_HOLD_REASON = "Insufficient filament on the assigned printer; review t
 _START_FAILED_HOLD_REASON = "The printer did not start this job; review the printer and start manually."
 _PRINTER_HOLD_REASONS = frozenset({_FILAMENT_HOLD_REASON, _START_FAILED_HOLD_REASON})
 
+
+def is_scheduler_printer_hold(waiting_reason: str | None) -> bool:
+    """Return whether a pending item is quarantining its assigned printer."""
+    return waiting_reason in _PRINTER_HOLD_REASONS
+
+
 # gcode_state values that mean the print is over, mapped to the queue status
 # they imply. Mirrors the mapping in bambu_mqtt's completion detection
 # (FINISH -> completed, FAILED -> failed, anything else terminal -> aborted,
@@ -1120,7 +1126,7 @@ class PrintScheduler:
                         selectinload(PrintQueueItem.variants).selectinload(PrintQueueVariant.library_file),
                     )
                     .order_by(
-                        PrintQueueItem.printer_id,
+                        PrintQueueItem.printer_id.nullslast(),
                         PrintQueueItem.target_model,
                         PrintQueueItem.been_jumped.desc(),
                         PrintQueueItem.print_time_seconds.asc().nullslast(),
@@ -1141,7 +1147,7 @@ class PrintScheduler:
                         # raise in async.
                         selectinload(PrintQueueItem.variants).selectinload(PrintQueueVariant.library_file),
                     )
-                    .order_by(PrintQueueItem.printer_id, PrintQueueItem.position)
+                    .order_by(PrintQueueItem.printer_id.nullslast(), PrintQueueItem.position)
                 )
             items = list(result.scalars().all())
 
@@ -1458,6 +1464,7 @@ class PrintScheduler:
                     # promote the item to manual_start so the user must
                     # acknowledge via the ▶ button (which re-checks live).
                     if await self._block_on_filament_deficit(db, item):
+                        busy_printers.add(item.printer_id)
                         continue
 
                     # Hold this item back for the next pass rather than racing
