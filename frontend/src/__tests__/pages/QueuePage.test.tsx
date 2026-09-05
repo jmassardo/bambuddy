@@ -184,7 +184,7 @@ describe('QueuePage', () => {
       render(<QueuePage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Test Print 1')).toBeInTheDocument();
+        expect(screen.getByText('Test Print 1')).toHaveAttribute('title', 'Test Print 1');
       });
     });
 
@@ -492,7 +492,7 @@ describe('QueuePage', () => {
       await user.click(await screen.findByRole('button', { name: /^History/ }));
 
       await waitFor(() => {
-        expect(screen.getByText('Completed Print')).toBeInTheDocument();
+        expect(screen.getByText('Completed Print')).toHaveAttribute('title', 'Completed Print');
       });
     });
 
@@ -525,13 +525,37 @@ describe('QueuePage', () => {
               archive_name: 'Multi-plate Print',
             },
           ]);
-        })
+        }),
+        http.get('/api/v1/archives/1/plates', () => {
+          return HttpResponse.json({
+            archive_id: 1,
+            filename: 'multi-plate.3mf',
+            is_multi_plate: true,
+            plates: [
+              {
+                index: 2,
+                name: 'Very Long Distinctive Plate Name',
+                objects: [],
+                has_thumbnail: false,
+                thumbnail_url: null,
+                print_time_seconds: null,
+                filament_used_grams: null,
+                filaments: [],
+              },
+            ],
+          });
+        }),
       );
 
       render(<QueuePage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Multi-plate Print')).toBeInTheDocument();
+        expect(
+          screen.getByText('Multi-plate Print • Very Long Distinctive Plate Name'),
+        ).toHaveAttribute(
+          'title',
+          'Multi-plate Print • Very Long Distinctive Plate Name',
+        );
       });
     });
   });

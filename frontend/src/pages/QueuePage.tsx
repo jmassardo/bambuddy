@@ -417,6 +417,15 @@ function SortableQueueItem({
   // Combine plates data from either source
   const platesData = isLibraryFile ? libraryPlatesData : archivePlatesData;
   const plates = platesData?.plates ?? [];
+  const itemDisplayName = queueItemDisplayName(item, (n) => t('common.plusNMore', { count: n }));
+  const selectedPlateName =
+    (platesData?.is_multi_plate ?? false) && item.plate_id != null
+      ? plates.find((plate) => plate.index === item.plate_id)?.name
+        || t('queue.plateNumber', { index: item.plate_id })
+      : null;
+  const fullDisplayName = selectedPlateName
+    ? `${itemDisplayName} • ${selectedPlateName}`
+    : itemDisplayName;
 
   const canReorder = hasPermission('queue:reorder');
   const {
@@ -577,9 +586,11 @@ function SortableQueueItem({
         {/* Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <p className="text-sm sm:text-base text-white font-medium truncate">
-              {queueItemDisplayName(item, (n) => t('common.plusNMore', { count: n }))}
-              {(platesData?.is_multi_plate ?? false) && item.plate_id !== undefined && item.plate_id !== null && ` • ${plates.find(plate => plate.index === item.plate_id)?.name || t('queue.plateNumber', { index: item.plate_id })}`}
+            <p
+              className="text-sm sm:text-base text-white font-medium truncate"
+              title={fullDisplayName}
+            >
+              {fullDisplayName}
             </p>
             {item.archive_id ? (
               <Link
