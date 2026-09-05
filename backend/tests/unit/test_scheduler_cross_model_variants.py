@@ -281,7 +281,7 @@ async def _add_variant_item(ctx, specs):
         return item.id
 
 
-async def _run_check_queue(ctx, scheduler, finder, waiting_notification=None):
+async def _run_check_queue(ctx, scheduler, finder, waiting_notification=None, filament_blocker=None):
     patches = [
         patch("backend.app.services.print_scheduler.async_session", ctx.session_maker),
         patch("backend.app.core.database.async_session", ctx.session_maker),
@@ -303,13 +303,77 @@ async def _run_check_queue(ctx, scheduler, finder, waiting_notification=None):
         # sentinel, which the unmappable guard (#2771) reads as "this job can
         # never print" and fails the item on.
         patch.object(scheduler, "_ensure_ams_mapping", AsyncMock(return_value=None)),
-        patch.object(scheduler, "_block_on_filament_deficit", AsyncMock(return_value=False)),
+        patch.object(
+            scheduler,
+            "_block_on_filament_deficit",
+            filament_blocker or AsyncMock(return_value=False),
+        ),
         patch.object(scheduler, "_launch_uploads", MagicMock()),
     ]
     with ExitStack() as stack:
         for p in patches:
             stack.enter_context(p)
         return await scheduler.check_queue()
+
+
+@pytest.mark.asyncio
+async def test_filament_blocked_assignment_reserves_printer_for_rest_of_pass(queue_db):
+    """A blocked model job must not pin every later job to the same printer."""
+    first_id = await _add_variant_item(queue_db, [{"model": "H2S"}])
+    second_id = await _add_variant_item(queue_db, [{"model": "H2S"}])
+    async with queue_db.session_maker() as db:
+        second = await db.get(PrintQueueItem, second_id)
+        second.position = 2
+        await db.commit()
+    scheduler = PrintScheduler()
+
+    async def finder(_db, _model, exclude_ids, *_args, **_kwargs):
+        return (None, "No idle H2S printer") if 1 in exclude_ids else (1, None)
+
+    async def block(_db, item):
+        item.manual_start = True
+        item.waiting_reason = "Insufficient filament on the assigned printer; review the spool and start manually."
+        await _db.commit()
+        return True
+
+    await _run_check_queue(
+        queue_db,
+        scheduler,
+        AsyncMock(side_effect=finder),
+        filament_blocker=AsyncMock(side_effect=block),
+    )
+
+    first = await _get_item(queue_db, first_id)
+    second = await _get_item(queue_db, second_id)
+    assert first.printer_id == 1
+    assert first.manual_start is True
+    assert second.printer_id is None
+
+
+@pytest.mark.asyncio
+async def test_existing_scheduler_hold_excludes_printer_on_next_pass(queue_db):
+    """A held job quarantines its printer until the operator releases it."""
+    held_id = await _add_variant_item(queue_db, [{"model": "H2S"}])
+    next_id = await _add_variant_item(queue_db, [{"model": "H2S"}])
+    async with queue_db.session_maker() as db:
+        held = await db.get(PrintQueueItem, held_id)
+        held.printer_id = 1
+        held.manual_start = True
+        held.waiting_reason = "The printer did not start this job; review the printer and start manually."
+        next_item = await db.get(PrintQueueItem, next_id)
+        next_item.position = 2
+        await db.commit()
+
+    scheduler = PrintScheduler()
+
+    async def finder(_db, _model, exclude_ids, *_args, **_kwargs):
+        assert 1 in exclude_ids
+        return None, "No idle H2S printer"
+
+    await _run_check_queue(queue_db, scheduler, AsyncMock(side_effect=finder))
+
+    next_item = await _get_item(queue_db, next_id)
+    assert next_item.printer_id is None
 
 
 async def _get_item(ctx, item_id):

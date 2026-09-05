@@ -103,7 +103,31 @@ class TestTheSweep:
 
         assert await self._status_of(db_session, item.id) == "printing"
 
-    async def test_a_row_is_closed_once_the_grace_period_passes(
+    async def test_an_idle_row_is_held_once_the_grace_period_passes(
+        self, scheduler, db_session, printer_factory, monkeypatch
+    ):
+        printer = await printer_factory()
+        item = await self._item(db_session, printer)
+        item_id = item.id
+        item_type = type(item)
+        monkeypatch.setattr(
+            "backend.app.services.print_scheduler.printer_manager.get_status", lambda _pid: _state("IDLE")
+        )
+
+        await scheduler._close_stranded_printing_items()
+        # Age the clock rather than sleeping five minutes.
+        scheduler._terminal_since[printer.id] -= _STRANDED_PRINTING_GRACE_SECONDS + 1
+        await scheduler._close_stranded_printing_items()
+
+        db_session.expire_all()
+        held = await db_session.get(item_type, item_id)
+        assert held.status == "pending"
+        assert held.manual_start is True
+        assert held.started_at is None
+        assert held.completed_at is None
+        assert "did not start" in held.waiting_reason
+
+    async def test_a_finished_row_is_closed_once_the_grace_period_passes(
         self, scheduler, db_session, printer_factory, monkeypatch
     ):
         printer = await printer_factory()
@@ -113,7 +137,6 @@ class TestTheSweep:
         )
 
         await scheduler._close_stranded_printing_items()
-        # Age the clock rather than sleeping five minutes.
         scheduler._terminal_since[printer.id] -= _STRANDED_PRINTING_GRACE_SECONDS + 1
         await scheduler._close_stranded_printing_items()
 

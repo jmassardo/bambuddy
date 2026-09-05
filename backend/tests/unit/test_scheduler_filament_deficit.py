@@ -70,6 +70,7 @@ async def test_blocks_on_deficit_promotes_to_manual_start(scheduler, db_session,
     await db_session.refresh(item)
     assert item.manual_start is True
     assert item.filament_short is True
+    assert "Insufficient filament" in item.waiting_reason
 
 
 @pytest.mark.asyncio
@@ -86,6 +87,7 @@ async def test_clears_stale_flag_when_deficit_resolves(scheduler, db_session, qu
     await db_session.refresh(item)
     assert item.filament_short is False
     assert item.manual_start is False
+    assert item.waiting_reason is None
 
 
 @pytest.mark.asyncio

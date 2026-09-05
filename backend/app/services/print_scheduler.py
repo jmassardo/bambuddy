@@ -128,6 +128,13 @@ _AIRDUCT_MODE_HEATING = 1
 # printer, so it should not be raised without reason.
 _STRANDED_PRINTING_GRACE_SECONDS = 300.0
 
+# These manual-start reasons reserve the assigned printer. They are recovery
+# holds created by the scheduler, not ordinary staged jobs that later work may
+# bypass.
+_FILAMENT_HOLD_REASON = "Insufficient filament on the assigned printer; review the spool and start manually."
+_START_FAILED_HOLD_REASON = "The printer did not start this job; review the printer and start manually."
+_PRINTER_HOLD_REASONS = frozenset({_FILAMENT_HOLD_REASON, _START_FAILED_HOLD_REASON})
+
 # gcode_state values that mean the print is over, mapped to the queue status
 # they imply. Mirrors the mapping in bambu_mqtt's completion detection
 # (FINISH -> completed, FAILED -> failed, anything else terminal -> aborted,
@@ -1000,18 +1007,30 @@ class PrintScheduler:
                     if now - since < _STRANDED_PRINTING_GRACE_SECONDS:
                         continue
 
-                    item.status = status
-                    item.completed_at = datetime.now(timezone.utc)
+                    if status == "cancelled":
+                        # IDLE does not prove an intentional cancellation. A
+                        # rejected project_file also leaves the printer IDLE,
+                        # so preserve the job and quarantine this printer.
+                        item.status = "pending"
+                        item.manual_start = True
+                        item.started_at = None
+                        item.completed_at = None
+                        item.waiting_reason = _START_FAILED_HOLD_REASON
+                        item.error_message = _START_FAILED_HOLD_REASON
+                        resulting_status = "pending (manual hold)"
+                    else:
+                        item.status = status
+                        item.completed_at = datetime.now(timezone.utc)
+                        resulting_status = status
                     closed = True
                     logger.warning(
                         "Queue item %s was still 'printing' after printer %s reported %s for %.0fs — "
-                        "closing it as %s. Its completion event was never matched to it, which blocks "
-                        "every later job for this printer (#2829).",
+                        "moving it to %s. Its completion event was never matched to it (#2829).",
                         item.id,
                         printer_id,
                         getattr(state, "state", None),
                         now - since,
-                        status,
+                        resulting_status,
                     )
                 if closed:
                     await db.commit()
@@ -1223,6 +1242,15 @@ class PrintScheduler:
             # hazard and works around it by staying out of busy_printers; this
             # generalises that workaround instead of repeating it per case.
             dispatching_printers: set[int] = set(busy_printers)
+
+            hold_result = await db.execute(
+                select(PrintQueueItem.printer_id)
+                .where(PrintQueueItem.status == "pending")
+                .where(PrintQueueItem.manual_start.is_(True))
+                .where(PrintQueueItem.waiting_reason.in_(_PRINTER_HOLD_REASONS))
+                .where(PrintQueueItem.printer_id.is_not(None))
+            )
+            busy_printers.update(pid for (pid,) in hold_result.all() if pid is not None)
 
             # Printers held by a Home Assistant sensor interlock (#1148) — an
             # enclosure door left open, say. The fixed-printer branch turns
@@ -1670,6 +1698,7 @@ class PrintScheduler:
 
                         # Filament-deficit pre-dispatch check (#1496).
                         if await self._block_on_filament_deficit(db, item):
+                            busy_printers.add(printer_id)
                             continue
 
                         _claim_library_row(item)
@@ -5686,19 +5715,17 @@ class PrintScheduler:
         result = await db.execute(select(Printer).where(Printer.id == printer_id))
         return result.scalar_one_or_none()
 
-    async def _notify_dispatch_gave_up(
+    async def _notify_dispatch_held(
         self,
         queue_item_id: int,
         printer_id: int,
-        created_by_id: int | None,
         reason: str = "Printer accepted the file but never started printing",
     ) -> None:
-        """Tell the user the queue item was failed after exhausting its dispatch retries.
+        """Tell the user the queue item is waiting after dispatch was stopped.
 
         Called from the watchdog, which is a background task with no session of
-        its own — hence the fresh one here. Best-effort throughout: the row is
-        already marked failed and that is the load-bearing part; a notification
-        provider being down must not resurrect the retry loop we just stopped.
+        its own — hence the fresh one here. Best-effort throughout: the pending
+        manual hold is already persisted and is the load-bearing part.
 
         ``reason`` defaults to the exhausted-retries wording. The command-rejected
         path passes its own, because "accepted the file but never started" is the
@@ -5711,25 +5738,14 @@ class PrintScheduler:
                     return
                 job_name = await self._get_job_name(db, item)
                 printer = await self._get_printer(db, printer_id)
-                await notification_service.on_queue_job_failed(
+                await notification_service.on_queue_job_waiting(
                     job_name=job_name,
-                    printer_id=printer_id,
-                    printer_name=printer.name if printer else "Unknown",
-                    reason=reason,
+                    target_model=(printer.model if printer else "") or "",
+                    waiting_reason=reason,
                     db=db,
                 )
         except Exception as e:
-            logger.warning("Queue item %s: give-up notification failed: %s", queue_item_id, e)
-
-        try:
-            await ws_manager.send_queue_item_failed(
-                user_id=created_by_id,
-                queue_item_id=queue_item_id,
-                printer_id=printer_id,
-                reason="never_started",
-            )
-        except Exception:
-            pass  # toast is best-effort
+            logger.warning("Queue item %s: hold notification failed: %s", queue_item_id, e)
 
     async def _block_on_filament_deficit(
         self,
@@ -5771,6 +5787,7 @@ class PrintScheduler:
         if deficit:
             item.filament_short = True
             item.manual_start = True
+            item.waiting_reason = _FILAMENT_HOLD_REASON
             await db.commit()
             job_name = await self._get_job_name(db, item)
             printer = await self._get_printer(db, item.printer_id) if item.printer_id else None
@@ -5793,6 +5810,8 @@ class PrintScheduler:
         # No deficit — clear any stale flag from a previous tick.
         if item.filament_short:
             item.filament_short = False
+            if item.waiting_reason == _FILAMENT_HOLD_REASON:
+                item.waiting_reason = None
             await db.commit()
         return False
 
@@ -7001,19 +7020,22 @@ class PrintScheduler:
             if command_rejected:
                 # No retry budget for this one: the printer refused to verify the
                 # command, and re-uploading the same 3MF to the same printer will
-                # be refused the same way. Fail now with the fix rather than after
-                # three laps of a message about SD cards (#2732).
-                item.status = "failed"
+                # be refused the same way. Preserve it as an operator-action hold.
+                item.status = "pending"
+                item.manual_start = True
+                item.waiting_reason = _START_FAILED_HOLD_REASON
                 item.error_message = (
                     "The printer rejected the print command: MQTT command verification failed "
                     "(HMS 0500-0500-0001-0007). Enable Developer Mode on the printer, restart it, "
                     "then start the job again."
                 )
-                item.completed_at = datetime.now(timezone.utc)
+                item.completed_at = None
                 await db.commit()
                 return "command_rejected"
             if item.dispatch_attempts >= DISPATCH_MAX_ATTEMPTS:
-                item.status = "failed"
+                item.status = "pending"
+                item.manual_start = True
+                item.waiting_reason = _START_FAILED_HOLD_REASON
                 if drying_ams_ids:
                     # #2758: the generic message below sent the reporter looking
                     # at the SD card while the actual obstacle — AMS units in a
@@ -7037,15 +7059,9 @@ class PrintScheduler:
                         f"{item.dispatch_attempts} attempts. Check the printer's screen for a "
                         f"prompt or error, confirm its SD card is readable, and start the job again."
                     )
-                item.completed_at = datetime.now(timezone.utc)
-                await release_budget_reservation(
-                    db,
-                    source_type="print_queue",
-                    source_id=item.id,
-                    status="released",
-                )
+                item.completed_at = None
                 await db.commit()
-                return "gave_up"
+                return "blocked"
             item.status = "pending"
             await db.commit()
             return "reverted"
@@ -7073,33 +7089,32 @@ class PrintScheduler:
         if revert_outcome == "command_rejected":
             logger.error(
                 "Queue item %s: printer %d reported HMS %s (MQTT command verification "
-                "failed) — the print command was rejected, not lost. Failing the item "
+                "failed) — the print command was rejected, not lost. Holding the item "
                 "without retrying; enable Developer Mode on the printer and restart it (#2732)",
                 queue_item_id,
                 printer_id,
                 HMS_MQTT_VERIFY_FAILED,
             )
-            await scheduler._notify_dispatch_gave_up(
+            await scheduler._notify_dispatch_held(
                 queue_item_id,
                 printer_id,
-                created_by_id,
                 reason="Printer rejected the print command (MQTT command verification failed)",
             )
             # Same reasoning as the landed_on_subtask path below: the file is on
             # the printer and a forced reconnect would only add 0500_4003 to a
             # problem that has nothing to do with the MQTT session (#1150).
             return
-        if revert_outcome == "gave_up":
-            logger.error(
+        if revert_outcome == "blocked":
+            logger.warning(
                 "Queue item %s: printer %d never started the print after %d dispatch "
-                "attempts (last one waited %.0fs) — marking the item failed instead of "
-                "re-uploading it again (#2555)",
+                "attempts (last one waited %.0fs) — holding the job and printer for "
+                "manual review instead of discarding the job (#2555)",
                 queue_item_id,
                 printer_id,
                 DISPATCH_MAX_ATTEMPTS,
                 total_timeout,
             )
-            await scheduler._notify_dispatch_gave_up(queue_item_id, printer_id, created_by_id)
+            await scheduler._notify_dispatch_held(queue_item_id, printer_id)
         elif revert_outcome == "reverted":
             if landed_on_subtask:
                 logger.warning(

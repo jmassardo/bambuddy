@@ -2427,6 +2427,9 @@ async def start_queue_item(
     # Print Anyway / no deficit: clear the flags and let the scheduler dispatch.
     item.manual_start = False
     item.filament_short = False
+    item.waiting_reason = None
+    item.error_message = None
+    item.dispatch_attempts = 0
     # Persist the user's "Print Anyway" decision so the scheduler does not
     # immediately re-flag this item on the next tick (#1698-followup). The
     # pre-fix behaviour bounced between "user said anyway" and

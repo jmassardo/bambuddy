@@ -513,7 +513,7 @@ class TestWatchdogRetryBudget:
             patch("backend.app.services.print_scheduler.async_session", db_session),
             patch("backend.app.core.database.async_session", db_session),
             patch(
-                "backend.app.services.notification_service.notification_service.on_queue_job_failed",
+                "backend.app.services.notification_service.notification_service.on_queue_job_waiting",
                 AsyncMock(),
             ) as notify,
         ):
@@ -564,8 +564,8 @@ class TestWatchdogRetryBudget:
                 assert item.status == "pending"
 
     @pytest.mark.asyncio
-    async def test_gives_up_and_fails_the_item_at_the_budget(self, db_session):
-        """The third wedge fails the row instead of queueing a fourth re-upload."""
+    async def test_gives_up_and_holds_the_item_at_the_budget(self, db_session):
+        """The third wedge stops auto-retries without discarding the queue row."""
         notify = None
         for _ in range(DISPATCH_MAX_ATTEMPTS):
             async with db_session() as db:
@@ -576,9 +576,11 @@ class TestWatchdogRetryBudget:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "failed", f"after {DISPATCH_MAX_ATTEMPTS} wedges the item must stop going round again"
+            assert item.status == "pending"
+            assert item.manual_start is True
             assert item.dispatch_attempts == DISPATCH_MAX_ATTEMPTS
-            assert item.completed_at is not None
+            assert item.completed_at is None
+            assert "did not start" in item.waiting_reason
             # The message has to tell the user where to look — the fault is on
             # the printer, and no amount of retrying from our side will fix it.
             assert "never started printing" in item.error_message
@@ -641,7 +643,7 @@ class TestWatchdogCommandRejected:
             patch("backend.app.services.print_scheduler.async_session", db_session),
             patch("backend.app.core.database.async_session", db_session),
             patch(
-                "backend.app.services.notification_service.notification_service.on_queue_job_failed",
+                "backend.app.services.notification_service.notification_service.on_queue_job_waiting",
                 AsyncMock(),
             ) as notify,
         ):
@@ -658,14 +660,15 @@ class TestWatchdogCommandRejected:
         return get_client, notify
 
     @pytest.mark.asyncio
-    async def test_fails_on_the_first_attempt(self, db_session):
+    async def test_holds_on_the_first_attempt(self, db_session):
         await self._run(db_session, self._rejected_status())
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "failed", "a refused command must not be retried"
+            assert item.status == "pending"
+            assert item.manual_start is True
             assert item.dispatch_attempts == 1, "it must not burn the whole budget"
-            assert item.completed_at is not None
+            assert item.completed_at is None
 
     @pytest.mark.asyncio
     async def test_error_message_names_the_fix(self, db_session):
@@ -685,7 +688,8 @@ class TestWatchdogCommandRejected:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "failed"
+            assert item.status == "pending"
+            assert item.manual_start is True
             assert item.dispatch_attempts == 1
 
     @pytest.mark.asyncio
@@ -699,7 +703,7 @@ class TestWatchdogCommandRejected:
         _, notify = await self._run(db_session, self._rejected_status())
 
         notify.assert_awaited_once()
-        assert "rejected" in notify.await_args.kwargs["reason"]
+        assert "rejected" in notify.await_args.kwargs["waiting_reason"]
 
     @pytest.mark.asyncio
     async def test_unrelated_hms_still_takes_the_retry_path(self, db_session):
@@ -780,7 +784,7 @@ class TestWatchdogNamesDryingAsTheObstacle:
             patch("backend.app.services.print_scheduler.async_session", db_session),
             patch("backend.app.core.database.async_session", db_session),
             patch(
-                "backend.app.services.notification_service.notification_service.on_queue_job_failed",
+                "backend.app.services.notification_service.notification_service.on_queue_job_waiting",
                 AsyncMock(),
             ),
         ):
@@ -806,7 +810,8 @@ class TestWatchdogNamesDryingAsTheObstacle:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-        assert item.status == "failed"
+        assert item.status == "pending"
+        assert item.manual_start is True
         assert "AMS 0, AMS 128" in item.error_message
         assert "were drying" in item.error_message
         # The old text sent the reporter to check the SD card. It must not be
@@ -839,7 +844,8 @@ class TestWatchdogNamesDryingAsTheObstacle:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-        assert item.status == "failed"
+        assert item.status == "pending"
+        assert item.manual_start is True
         assert "SD card" in item.error_message
         assert "drying" not in item.error_message
 
@@ -865,7 +871,7 @@ class TestWatchdogNamesDryingAsTheObstacle:
                 patch("backend.app.services.print_scheduler.async_session", db_session),
                 patch("backend.app.core.database.async_session", db_session),
                 patch(
-                    "backend.app.services.notification_service.notification_service.on_queue_job_failed",
+                    "backend.app.services.notification_service.notification_service.on_queue_job_waiting",
                     AsyncMock(),
                 ),
             ):

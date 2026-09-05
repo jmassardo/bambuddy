@@ -994,14 +994,27 @@ class TestQueueStartEndpoint:
     @pytest.mark.integration
     async def test_start_staged_queue_item(self, async_client: AsyncClient, queue_item_factory, db_session):
         """Verify starting a staged (manual_start=True) queue item clears the flag."""
-        item = await queue_item_factory(manual_start=True)
+        item = await queue_item_factory(
+            manual_start=True,
+            waiting_reason="The printer did not start this job",
+            error_message="Previous start failed",
+            dispatch_attempts=3,
+        )
+        item_id = item.id
+        item_type = type(item)
         assert item.manual_start is True
 
-        response = await async_client.post(f"/api/v1/queue/{item.id}/start")
+        response = await async_client.post(f"/api/v1/queue/{item_id}/start")
         assert response.status_code == 200
         result = response.json()
         assert result["manual_start"] is False
         assert result["status"] == "pending"
+        assert result["waiting_reason"] is None
+        assert result["error_message"] is None
+
+        db_session.expire_all()
+        persisted = await db_session.get(item_type, item_id)
+        assert persisted.dispatch_attempts == 0
 
     @pytest.mark.asyncio
     @pytest.mark.integration
